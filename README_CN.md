@@ -1,5 +1,7 @@
 # AppleTrace 🍎
 
+[Discord](https://discord.gg/eGzEaP6TzR)
+
 <div align="center">
 
 [![GitHub Stars](https://img.shields.io/github/stars/everettjf/AppleTrace?style=flat-square&color=4ECDC4)](https://github.com/everettjf/AppleTrace/stargazers)

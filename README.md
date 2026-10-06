@@ -1,5 +1,7 @@
 # AppleTrace 🍎
 
+[Discord](https://discord.gg/eGzEaP6TzR)
+
 Repository: <https://github.com/everettjf/appletrace>
 
 <div align="center">
