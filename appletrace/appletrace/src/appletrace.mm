@@ -264,10 +264,12 @@ public:
 
         NSLog(@"AppleTrace: rolling trace fragment");
         if (!Open()) {
+            write_failures_.fetch_add(1, std::memory_order_relaxed);
             return;
         }
 
         if (!log_.AddLine(line)) {
+            write_failures_.fetch_add(1, std::memory_order_relaxed);
             NSLog(@"AppleTrace: failed to write event after rollover");
         }
     }
@@ -302,6 +304,10 @@ public:
         return work_dir_;
     }
 
+    uint64_t WriteFailures() const {
+        return write_failures_.load(std::memory_order_relaxed);
+    }
+
 private:
     void WriteBinaryHeader() {
         std::string header(kBinaryMagic, sizeof(kBinaryMagic));
@@ -319,9 +325,11 @@ private:
 
         NSLog(@"AppleTrace: rolling trace fragment");
         if (!Open()) {
+            write_failures_.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         if (!log_.AddRaw(block)) {
+            write_failures_.fetch_add(1, std::memory_order_relaxed);
             NSLog(@"AppleTrace: failed to write binary batch after rollover");
         }
     }
@@ -376,6 +384,7 @@ private:
     Logger log_;
     bool binary_ = false;
     uint32_t header_pid_ = 0;
+    std::atomic<uint64_t> write_failures_{0};
 };
 
 std::atomic<int> LoggerManager::file_counter_{0};
@@ -456,6 +465,7 @@ public:
         if (!IsEnabled() || !name || name[0] == '\0' || !queue_) {
             return;
         }
+        accepted_events_.fetch_add(1, std::memory_order_relaxed);
 
         const uint64_t thread_id = ResolveThreadId();
         const uint64_t elapsed_us = (CurrentTimeNs() - begin_) / 1000;
@@ -471,6 +481,7 @@ public:
         if (!IsEnabled() || !name || name[0] == '\0' || !queue_) {
             return;
         }
+        accepted_events_.fetch_add(1, std::memory_order_relaxed);
 
         const uint64_t thread_id = ResolveThreadId();
         const uint64_t elapsed_us = (CurrentTimeNs() - begin_) / 1000;
@@ -490,6 +501,7 @@ public:
         if (!IsEnabled() || !name || name[0] == '\0' || !queue_) {
             return;
         }
+        accepted_events_.fetch_add(1, std::memory_order_relaxed);
 
         const uint64_t thread_id = ResolveThreadId();
         const uint64_t elapsed_us = (CurrentTimeNs() - begin_) / 1000;
@@ -515,6 +527,7 @@ public:
         if (!IsEnabled() || !name || name[0] == '\0' || !queue_) {
             return;
         }
+        accepted_events_.fetch_add(1, std::memory_order_relaxed);
 
         const uint64_t thread_id = ResolveThreadId();
         const uint64_t elapsed_us = (CurrentTimeNs() - begin_) / 1000;
@@ -562,6 +575,24 @@ public:
 
     void SyncWait() {
         Flush();
+    }
+
+    void GetMetrics(APTTraceMetrics *metrics) {
+        if (!metrics) {
+            return;
+        }
+        uint64_t pending_bytes = 0;
+        {
+            std::lock_guard<std::mutex> guard(registry_mutex_);
+            for (auto &thread_log : thread_logs_) {
+                os_unfair_lock_lock(&thread_log->lock);
+                pending_bytes += thread_log->pending.size();
+                os_unfair_lock_unlock(&thread_log->lock);
+            }
+        }
+        metrics->accepted_events = accepted_events_.load(std::memory_order_relaxed);
+        metrics->pending_bytes = pending_bytes;
+        metrics->write_failures = log_.WriteFailures();
     }
 
     // Drains and deregisters the calling thread's buffer at thread exit. Called
@@ -781,6 +812,7 @@ private:
     pid_t pid_ = 0;
     std::atomic<uint64_t> main_thread_id_{0};
     std::atomic<bool> enabled_{true};
+    std::atomic<uint64_t> accepted_events_{0};
     bool binary_ = false;
     std::mutex registry_mutex_;
     std::vector<std::unique_ptr<ThreadLog>> thread_logs_;
@@ -833,6 +865,8 @@ public:
 
     void SetEnabled(bool enabled) {
         trace_.SetEnabled(enabled);
+        state_.store(enabled ? APTCaptureStateRecording : APTCaptureStateIdle,
+                     std::memory_order_release);
     }
 
     bool IsEnabled() const {
@@ -843,14 +877,48 @@ public:
         return trace_.GetTraceDirectory();
     }
 
+    bool StartCapture() {
+        APTCaptureState expected = APTCaptureStateIdle;
+        if (!state_.compare_exchange_strong(expected, APTCaptureStateStarting,
+                                            std::memory_order_acq_rel)) {
+            return expected == APTCaptureStateRecording;
+        }
+        trace_.SetEnabled(true);
+        state_.store(APTCaptureStateRecording, std::memory_order_release);
+        return true;
+    }
+
+    void StopCapture() {
+        APTCaptureState expected = APTCaptureStateRecording;
+        if (!state_.compare_exchange_strong(expected, APTCaptureStateStopping,
+                                            std::memory_order_acq_rel)) {
+            return;
+        }
+        trace_.SetEnabled(false);
+        state_.store(APTCaptureStateFinalizing, std::memory_order_release);
+        trace_.Flush();
+        state_.store(APTCaptureStateIdle, std::memory_order_release);
+    }
+
+    APTCaptureState CaptureState() const {
+        return state_.load(std::memory_order_acquire);
+    }
+
+    void GetMetrics(APTTraceMetrics *metrics) {
+        trace_.GetMetrics(metrics);
+    }
+
 private:
     TraceManager() {
         if (!trace_.Open()) {
             NSLog(@"AppleTrace: failed to initialize trace runtime");
         }
+        state_.store(trace_.IsEnabled() ? APTCaptureStateRecording : APTCaptureStateIdle,
+                     std::memory_order_release);
     }
 
     Trace trace_;
+    std::atomic<APTCaptureState> state_{APTCaptureStateIdle};
 };
 
 }  // namespace appletrace
@@ -897,6 +965,22 @@ BOOL APTIsEnabled() {
 
 const char *APTGetTraceDirectory() {
     return appletrace::TraceManager::Instance().GetTraceDirectory();
+}
+
+BOOL APTStartCapture() {
+    return appletrace::TraceManager::Instance().StartCapture();
+}
+
+void APTStopCapture() {
+    appletrace::TraceManager::Instance().StopCapture();
+}
+
+APTCaptureState APTGetCaptureState() {
+    return appletrace::TraceManager::Instance().CaptureState();
+}
+
+void APTGetTraceMetrics(APTTraceMetrics *metrics) {
+    appletrace::TraceManager::Instance().GetMetrics(metrics);
 }
 
 @interface APTInterface : NSObject

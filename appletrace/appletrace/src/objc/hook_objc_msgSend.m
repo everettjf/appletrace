@@ -86,6 +86,7 @@ typedef struct APTNameEntry {
     Class cls;
     SEL sel;
     const char *name;
+    uint64_t filter_generation;
     struct APTNameEntry *next;
 } APTNameEntry;
 
@@ -101,6 +102,7 @@ static char **gAllowPrefixes = NULL;
 static size_t gAllowPrefixCount = 0;
 static char **gDenyPrefixes = NULL;
 static size_t gDenyPrefixCount = 0;
+static uint64_t gFilterGeneration = 1;
 static __thread int gTraceGuard = 0;
 static pthread_key_t gTraceStackKey;
 static pthread_once_t gTraceStackKeyOnce = PTHREAD_ONCE_INIT;
@@ -111,12 +113,16 @@ static APTObjcMsgSendFunction apt_original_objc_msgSend = NULL;
 static APTObjcMsgSendSuper2Function apt_original_objc_msgSendSuper2 = NULL;
 static struct APTRebindingsEntry *gRebindingsHead = NULL;
 static BOOL gHookInstalled = NO;
+static BOOL gDyldCallbackRegistered = NO;
 
 __attribute__((used)) static void apt_before_objc_msgSend(id object, SEL selector);
 __attribute__((used)) static void apt_before_objc_msgSendSuper2(struct objc_super *super_info, SEL selector);
 __attribute__((used)) static void apt_after_objc_msgSend(void);
 static void apt_configure_trace_ranges(void);
 static int apt_rebind_symbols(struct APTRebinding rebindings[], size_t count);
+static void apt_rebind_symbols_for_image(const struct mach_header *header,
+                                         intptr_t slide,
+                                         struct APTRebindingsEntry *rebindings);
 extern void apt_objc_msgSend_wrapper(void);
 extern void apt_objc_msgSendSuper2_wrapper(void);
 
@@ -409,6 +415,56 @@ static void apt_parse_prefix_list(NSString *key, char ***out_prefixes, size_t *o
     *out_count = count;
 }
 
+static void apt_free_prefix_list(char **prefixes, size_t count) {
+    if (!prefixes) {
+        return;
+    }
+    for (size_t index = 0; index < count; index++) {
+        free(prefixes[index]);
+    }
+    free(prefixes);
+}
+
+static void apt_parse_prefix_string(const char *value, char ***out_prefixes, size_t *out_count) {
+    *out_prefixes = NULL;
+    *out_count = 0;
+    if (!value || value[0] == '\0') {
+        return;
+    }
+
+    NSString *input = [NSString stringWithUTF8String:value];
+    if (!input.length) {
+        return;
+    }
+
+    NSMutableArray<NSString *> *parsed = [NSMutableArray array];
+    for (NSString *component in [input componentsSeparatedByString:@","]) {
+        NSString *trimmed = [component stringByTrimmingCharactersInSet:
+                                 [NSCharacterSet whitespaceCharacterSet]];
+        if (trimmed.length) {
+            [parsed addObject:trimmed];
+        }
+    }
+    if (parsed.count == 0) {
+        return;
+    }
+
+    char **prefixes = calloc(parsed.count, sizeof(char *));
+    if (!prefixes) {
+        return;
+    }
+
+    size_t count = 0;
+    for (NSString *prefix in parsed) {
+        char *copy = strdup(prefix.UTF8String);
+        if (copy) {
+            prefixes[count++] = copy;
+        }
+    }
+    *out_prefixes = prefixes;
+    *out_count = count;
+}
+
 static void apt_configure_trace_ranges(void) {
     gLogAllSelectors = apt_bool_from_environment(@"APPLETRACE_TRACE_ALL_SELECTORS", YES);
     gLogAllClasses = apt_bool_from_environment(@"APPLETRACE_TRACE_ALL_CLASSES", YES);
@@ -529,12 +585,14 @@ static const char *apt_intern_trace_name(Class cls, SEL selector) {
         return NULL;
     }
 
-    uintptr_t hash = (((uintptr_t)cls >> 3) * 2654435761u) ^ ((uintptr_t)selector >> 3);
+    uintptr_t hash = (((uintptr_t)cls >> 3) * 2654435761u) ^
+                     ((uintptr_t)sel_getName(selector) >> 3);
     size_t bucket = hash & (APT_INTERN_BUCKET_COUNT - 1);
 
     os_unfair_lock_lock(&gInternLock);
     for (APTNameEntry *entry = gInternBuckets[bucket]; entry; entry = entry->next) {
-        if (entry->cls == cls && entry->sel == selector) {
+        if (entry->cls == cls && entry->sel == selector &&
+            entry->filter_generation == gFilterGeneration) {
             const char *name = entry->name;
             os_unfair_lock_unlock(&gInternLock);
             return name;
@@ -547,6 +605,7 @@ static const char *apt_intern_trace_name(Class cls, SEL selector) {
         entry->cls = cls;
         entry->sel = selector;
         entry->name = name;
+        entry->filter_generation = gFilterGeneration;
         entry->next = gInternBuckets[bucket];
         gInternBuckets[bucket] = entry;
     }
@@ -778,16 +837,31 @@ static void apt_rebind_symbols_for_image(const struct mach_header *header,
     }
 }
 
+static void apt_dyld_image_added(const struct mach_header *header, intptr_t slide) {
+    if (gRebindingsHead) {
+        apt_rebind_symbols_for_image(header, slide, gRebindingsHead);
+    }
+}
+
 static int apt_rebind_symbols(struct APTRebinding rebindings[], size_t count) {
     int failure = apt_prepend_rebindings(&gRebindingsHead, rebindings, count);
     if (failure < 0) {
         return failure;
     }
 
-    for (uint32_t image_index = 0; image_index < _dyld_image_count(); image_index++) {
-        apt_rebind_symbols_for_image(_dyld_get_image_header(image_index),
-                                     _dyld_get_image_vmaddr_slide(image_index),
-                                     gRebindingsHead);
+    if (!gDyldCallbackRegistered) {
+        // Registration synchronously invokes the callback for every image that
+        // is already loaded, then covers frameworks loaded later via dlopen.
+        gDyldCallbackRegistered = YES;
+        _dyld_register_func_for_add_image(apt_dyld_image_added);
+    } else {
+        // A later rebinding registration must also be applied to existing
+        // images because dyld only calls add-image callbacks once per image.
+        for (uint32_t image_index = 0; image_index < _dyld_image_count(); image_index++) {
+            apt_rebind_symbols_for_image(_dyld_get_image_header(image_index),
+                                         _dyld_get_image_vmaddr_slide(image_index),
+                                         gRebindingsHead);
+        }
     }
 
     return 0;
@@ -812,4 +886,32 @@ BOOL APTInstallObjcMsgSendHook(void) {
 
 BOOL APTIsObjcMsgSendHookInstalled(void) {
     return gHookInstalled;
+}
+
+void APTSetObjcTraceClassFilters(const char *allow_prefixes, const char *deny_prefixes) {
+    char **new_allow = NULL;
+    size_t new_allow_count = 0;
+    char **new_deny = NULL;
+    size_t new_deny_count = 0;
+    apt_parse_prefix_string(allow_prefixes, &new_allow, &new_allow_count);
+    apt_parse_prefix_string(deny_prefixes, &new_deny, &new_deny_count);
+
+    os_unfair_lock_lock(&gInternLock);
+    char **old_allow = gAllowPrefixes;
+    size_t old_allow_count = gAllowPrefixCount;
+    char **old_deny = gDenyPrefixes;
+    size_t old_deny_count = gDenyPrefixCount;
+    gAllowPrefixes = new_allow;
+    gAllowPrefixCount = new_allow_count;
+    gDenyPrefixes = new_deny;
+    gDenyPrefixCount = new_deny_count;
+    gFilterGeneration += 1;
+    os_unfair_lock_unlock(&gInternLock);
+
+    // Prefix arrays are only read while gInternLock is held by the intern/name
+    // path, so they are no longer reachable after the swap. Interned names are
+    // deliberately retained because active per-thread stacks may still borrow
+    // pointers created by an older filter generation.
+    apt_free_prefix_list(old_allow, old_allow_count);
+    apt_free_prefix_list(old_deny, old_deny_count);
 }

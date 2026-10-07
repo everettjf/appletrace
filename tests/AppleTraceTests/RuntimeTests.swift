@@ -37,4 +37,22 @@ final class RuntimeTests: XCTestCase {
         XCTAssertTrue(isEnabled)
         setEnabled(original)
     }
+
+    func testCaptureLifecycleAndMetrics() {
+        stopCapture()
+        XCTAssertEqual(captureState, .idle)
+
+        XCTAssertTrue(startCapture())
+        XCTAssertEqual(captureState, .recording)
+        let before = traceMetrics.acceptedEvents
+        traceInstant("capture-lifecycle-event")
+        XCTAssertGreaterThanOrEqual(traceMetrics.acceptedEvents, before + 1)
+
+        stopCapture()
+        XCTAssertEqual(captureState, .idle)
+        XCTAssertEqual(traceMetrics.writeFailures, 0)
+
+        // Preserve the historical default for tests that follow in-process.
+        XCTAssertTrue(startCapture())
+    }
 }

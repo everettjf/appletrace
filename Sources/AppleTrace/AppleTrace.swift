@@ -86,6 +86,46 @@ public var traceDirectory: String {
     String(cString: APTGetTraceDirectory())
 }
 
+public enum CaptureState: UInt32, Sendable {
+    case idle = 0
+    case starting = 1
+    case recording = 2
+    case stopping = 3
+    case finalizing = 4
+}
+
+public struct TraceMetrics: Sendable, Equatable {
+    public let acceptedEvents: UInt64
+    public let pendingBytes: UInt64
+    public let writeFailures: UInt64
+}
+
+/// Starts recording if the runtime is idle. Returns true when recording is
+/// active after the call, including an already-running capture.
+@discardableResult
+public func startCapture() -> Bool {
+    APTStartCapture()
+}
+
+/// Stops recording and synchronously flushes pending trace batches.
+public func stopCapture() {
+    APTStopCapture()
+}
+
+public var captureState: CaptureState {
+    CaptureState(rawValue: APTGetCaptureState().rawValue) ?? .idle
+}
+
+public var traceMetrics: TraceMetrics {
+    var metrics = APTTraceMetrics(accepted_events: 0, pending_bytes: 0, write_failures: 0)
+    APTGetTraceMetrics(&metrics)
+    return TraceMetrics(
+        acceptedEvents: metrics.accepted_events,
+        pendingBytes: metrics.pending_bytes,
+        writeFailures: metrics.write_failures
+    )
+}
+
 // MARK: - Macros
 
 /// Wraps the annotated function's body in a trace section named after the

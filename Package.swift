@@ -11,6 +11,8 @@ let package = Package(
     products: [
         .library(name: "AppleTrace", targets: ["AppleTrace"]),
         .library(name: "AppleTraceAuto", targets: ["AppleTraceAuto"]),
+        .library(name: "AppleTraceProtocol", targets: ["AppleTraceProtocol"]),
+        .library(name: "AppleTraceServer", targets: ["AppleTraceServer"]),
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "600.0.0"),
@@ -41,6 +43,17 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
 
+        .target(
+            name: "AppleTraceProtocol"
+        ),
+
+        .target(
+            name: "AppleTraceServer",
+            dependencies: ["AppleTrace", "AppleTraceProtocol"],
+            resources: [.copy("Resources/Console")],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+
         // SwiftSyntax compiler plugin implementing the macros.
         .macro(
             name: "AppleTraceMacrosPlugin",
@@ -65,6 +78,8 @@ let package = Package(
             dependencies: [
                 "AppleTrace",
                 "AppleTraceAuto",
+                "AppleTraceProtocol",
+                "AppleTraceServer",
                 "AppleTraceMacrosPlugin",
                 .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax"),
             ]

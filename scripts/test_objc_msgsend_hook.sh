@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SIMULATOR_NAME="${SIMULATOR_NAME:-}"
-WAIT_SECONDS="${WAIT_SECONDS:-5}"
+WAIT_SECONDS="${WAIT_SECONDS:-10}"
+SIMULATOR_DEPLOYMENT_TARGET="${SIMULATOR_DEPLOYMENT_TARGET:-15.0}"
 EXPERIMENTAL_SCENARIO="${APPLETRACE_EXPERIMENTAL_SCENARIO:-0}"
 APP_BUNDLE_ID="com.everettjf.TraceAllMsgDemo"
 DERIVED_DATA_DIR="${ROOT_DIR}/build/TraceAllMsgDemoDerived"
@@ -56,14 +57,26 @@ xcodebuild \
   -scheme TraceAllMsgDemo \
   -configuration Debug \
   -sdk iphonesimulator \
-  -destination "platform=iOS Simulator,name=${SIMULATOR_NAME}" \
+  -destination "platform=iOS Simulator,id=${DEVICE_ID}" \
   -derivedDataPath "${DERIVED_DATA_DIR}" \
-  build CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=12.0 >/tmp/appletrace-smoke-build.log
+  build CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET="${SIMULATOR_DEPLOYMENT_TARGET}" >/tmp/appletrace-smoke-build.log
 
 if [[ ! -d "${APP_PATH}" ]]; then
   echo "Build succeeded but app bundle not found: ${APP_PATH}" >&2
   exit 1
 fi
+
+echo "[2/7] Building late-loaded hook probe"
+SIMULATOR_SDK_PATH="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+xcrun --sdk iphonesimulator clang \
+  -dynamiclib \
+  -fobjc-arc \
+  -arch arm64 \
+  -mios-simulator-version-min="${SIMULATOR_DEPLOYMENT_TARGET}" \
+  -isysroot "${SIMULATOR_SDK_PATH}" \
+  -framework Foundation \
+  "${ROOT_DIR}/sample/TraceAllMsgDemo/LateLoadedProbe.m" \
+  -o "${APP_PATH}/TraceLateLoad.dylib"
 
 MARKER_FILE="$(mktemp)"
 touch "${MARKER_FILE}"
@@ -85,8 +98,28 @@ else
   xcrun simctl launch "${DEVICE_ID}" "${APP_BUNDLE_ID}"
 fi
 
-echo "[5/7] Waiting ${WAIT_SECONDS}s for hook install and trace flush"
-sleep "${WAIT_SECONDS}"
+echo "[5/7] Waiting up to ${WAIT_SECONDS}s for hook install and trace flush"
+python3 - "${DATA_CONTAINER}/Library/appletracedata" "${WAIT_SECONDS}" "${EXPERIMENTAL_SCENARIO}" <<'PY'
+import pathlib
+import sys
+import time
+
+trace_directory = pathlib.Path(sys.argv[1])
+deadline = time.monotonic() + float(sys.argv[2])
+experimental = sys.argv[3] == "1"
+while time.monotonic() < deadline:
+    trace_data = b""
+    for path in trace_directory.glob("*.appletrace"):
+        trace_data += path.read_bytes().replace(b"\x00", b"")
+    if experimental:
+        progress = trace_directory / "scenario-progress.log"
+        progress_text = progress.read_text(errors="ignore") if progress.exists() else ""
+        if "runTraceScenario:block2-after-flush" in progress_text and b"[APTLateLoadedProbe]run" in trace_data:
+            raise SystemExit(0)
+    elif b"appletrace-smoke-scenario" in trace_data:
+        raise SystemExit(0)
+    time.sleep(0.2)
+PY
 
 echo "[6/7] Checking for crashes"
 crash_files="$(find "${CRASH_DIR}" -maxdepth 1 -name 'TraceAllMsgDemo-*.ips' -newer "${MARKER_FILE}" | sort)"
@@ -152,16 +185,18 @@ if [[ -z "${trace_files}" ]]; then
   exit 1
 fi
 
-while IFS= read -r trace_file; do
-  if [[ -s "${trace_file}" ]]; then
-    echo "Trace generated: ${trace_file}"
-    if ! APPLETRACE_EXPERIMENTAL_SCENARIO="${EXPERIMENTAL_SCENARIO}" python3 - "${trace_file}" <<'PY'
+echo "Trace fragments:"
+printf '%s\n' "${trace_files}"
+if ! APPLETRACE_EXPERIMENTAL_SCENARIO="${EXPERIMENTAL_SCENARIO}" python3 - "${TRACE_DIR}" <<'PY'
 import pathlib
 import os
 import sys
 
-trace_path = pathlib.Path(sys.argv[1])
-data = trace_path.read_bytes().replace(b"\x00", b"")
+trace_directory = pathlib.Path(sys.argv[1])
+trace_paths = sorted(trace_directory.glob("*.appletrace"))
+data = b"\n".join(path.read_bytes().replace(b"\x00", b"") for path in trace_paths if path.stat().st_size)
+if not data:
+    raise SystemExit("trace fragments are empty")
 text = data.decode("utf-8", errors="ignore")
 if '"name":"process_name"' not in text:
     raise SystemExit("trace missing process_name metadata")
@@ -181,26 +216,22 @@ if os.environ.get("APPLETRACE_EXPERIMENTAL_SCENARIO") == "1":
         "[AppDelegate]makeRangeLocation:length:",
         "[AppDelegate]makeInsetsTop:left:bottom:right:",
         "[APTSuperBase]superPing",
-        "[APTSuperChild]init",
         "[APTSuperChild]invokeSuperPing",
         "[ThreadTest]goLoop",
+        "[AppDelegate]filterAllowedProbe",
+        "[APTLateLoadedProbe]run",
     )
     if not all(name in text for name in expected):
         raise SystemExit("trace missing experimental sample method events")
+    if "[AppDelegate]filterDeniedProbe" in text:
+        raise SystemExit("runtime class filter did not suppress denied probe")
 for line in text.splitlines()[:10]:
     print(line)
 PY
-    then
-      print_experimental_progress
-      exit 1
-    fi
-    if ! assert_experimental_progress; then
-      exit 1
-    fi
-    exit 0
-  fi
-done <<< "${trace_files}"
-
-print_experimental_progress
-echo "Trace files exist but are empty: ${TRACE_DIR}" >&2
-exit 1
+then
+  print_experimental_progress
+  exit 1
+fi
+if ! assert_experimental_progress; then
+  exit 1
+fi

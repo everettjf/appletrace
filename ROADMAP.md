@@ -102,14 +102,13 @@ should lean into that rather than chasing Frida's full feature set.
 ### Phase 2 — Hot-path performance
 - ✅ Introduce `(Class, SEL)` name interning.
 - ✅ Use a zero-allocation per-thread call stack (no per-message `malloc`).
-- 🛠️ Move event recording to per-thread batched buffers with bulk background
-  flushing — implemented per
-  [docs/perf-batching-design.md](docs/perf-batching-design.md); **pending macOS
-  build + profiling verification.**
-- 🛠️ Defer JSON formatting to the exporter; emit binary events at runtime.
-  Exporter/decoder implemented + tested (`appletrace_binary.py`, wired into
-  `merge.py`); native writer implemented behind opt-in `APPLETRACE_BINARY=1`
-  (**pending macOS verification**). See
+- ✅ Move event recording to per-thread batched buffers with bulk background
+  flushing, implemented per
+  [docs/perf-batching-design.md](docs/perf-batching-design.md). The host stress
+  harness verifies 200,000 paired events without loss or duplication.
+- ✅ Defer JSON formatting to the exporter; emit binary events at runtime.
+  Exporter/decoder is wired into `merge.py`; the native writer is available
+  behind `APPLETRACE_BINARY=1` and covered by the same stress harness. See
   [docs/binary-fragment-format.md](docs/binary-fragment-format.md).
 
 ### Phase 3 — Expressiveness & control
@@ -118,5 +117,23 @@ should lean into that rather than chasing Frida's full feature set.
 
 ### Phase 4 — Reach & polish
 - ✅ Add `CONTRIBUTING.md`.
-- ✅ Scope to arm64 (arm64e dropped; hook hard-errors there).
+- ✅ Support arm64 and arm64e, including authenticated GOT rebinding and
+  PAC/BTI-aware wrappers.
 - Explore an `os_signpost` backend and/or Perfetto protobuf export.
+
+### Phase 5 — Local control plane
+- ✅ Capture lifecycle and runtime metrics API.
+- ✅ Runtime class-filter replacement with generation-safe intern caching.
+- ✅ Rebind images added after installation through dyld's add-image callback.
+- ✅ Versioned loopback HTTP/WebSocket control protocol with token auth.
+- ✅ Embedded React control console and trace artifact download.
+- ✅ Theos rootless/rootful tweak package, bundle allowlist, `appletraced`, and
+  bidirectional Unix-socket Agent transport.
+- ✅ Multi-Agent session broker with process-scoped commands and trace access.
+- ✅ Daemon-hosted React console with connected-process selection.
+- ✅ Agent heartbeats, stale-session eviction, stable reconnect identity, and
+  bounded command writes.
+- ✅ Bounded HTTP clients/input plus per-Agent trace quotas and oldest-first
+  retention.
+- ⏳ Validate the tweak on supported jailbroken devices and injector stacks;
+  host builds cannot prove injection, sandbox, launchd, or PAC runtime behavior.

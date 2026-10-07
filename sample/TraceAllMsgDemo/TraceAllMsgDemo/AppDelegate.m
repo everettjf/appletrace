@@ -9,6 +9,7 @@
 #import "AppDelegate.h"
 #import <appletrace/appletrace.h>
 #import <fcntl.h>
+#import <dlfcn.h>
 #import <limits.h>
 #import <string.h>
 #import <unistd.h>
@@ -165,6 +166,14 @@ static void APTAppendScenarioProgressInsets(const char *label, UIEdgeInsets inse
 //    NSLog(@"my test");
 }
 
+- (void)filterDeniedProbe {
+    usleep(10);
+}
+
+- (void)filterAllowedProbe {
+    usleep(10);
+}
+
 - (void)levelOne{
     usleep(50);
     [self levelTwo];
@@ -317,6 +326,27 @@ static void APTAppendScenarioProgressInsets(const char *label, UIEdgeInsets inse
     [superChild invokeSuperPing];
     APTAppendScenarioProgress("runTraceScenario:after-superPing");
 
+    // Verify that runtime filter updates invalidate cached (Class, SEL)
+    // decisions without invalidating names borrowed by active call stacks.
+    APTSetObjcTraceClassFilters("NoMatchingClass", NULL);
+    [self filterDeniedProbe];
+    APTSetObjcTraceClassFilters("AppDelegate", NULL);
+    [self filterAllowedProbe];
+    APTSetObjcTraceClassFilters(NULL, NULL);
+    APTAppendScenarioProgress("runTraceScenario:after-runtime-filter");
+
+    NSString *lateProbePath = [[NSBundle mainBundle] pathForResource:@"TraceLateLoad" ofType:@"dylib"];
+    if (lateProbePath.length) {
+        void *lateProbeHandle = dlopen(lateProbePath.fileSystemRepresentation, RTLD_NOW | RTLD_LOCAL);
+        void (*invokeLateProbe)(void) = lateProbeHandle ? dlsym(lateProbeHandle, "APTInvokeLateLoadedProbe") : NULL;
+        if (invokeLateProbe) {
+            invokeLateProbe();
+            APTAppendScenarioProgress("runTraceScenario:after-late-loaded-probe");
+        } else {
+            APTAppendScenarioProgress("runTraceScenario:late-loaded-probe-failed");
+        }
+    }
+
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         APTAppendScenarioProgress("runTraceScenario:block2-entry");
         APTEndSection("appletrace-smoke-scenario");
@@ -336,7 +366,10 @@ static void APTAppendScenarioProgressInsets(const char *label, UIEdgeInsets inse
     }
 
     self.didStartTraceScenario = YES;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    // Start promptly so simulator automation cannot background the sample
+    // before the scenario begins. The scenario itself still exercises delayed
+    // main-queue completion and background concurrency.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(250 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
         BOOL shouldRunExperimental = APTBoolFromEnvironment(@"APPLETRACE_EXPERIMENTAL_SCENARIO") ||
                                      APTProcessHasArgument(@"-AppleTraceExperimentalScenario") ||
                                      APTExperimentalMarkerExists();

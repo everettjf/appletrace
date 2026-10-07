@@ -1,0 +1,10 @@
+Package: com.everettjf.appletrace
+Name: AppleTrace
+Version: 0.2.0
+Architecture: iphoneos-arm
+Description: Authorized Objective-C tracing agent and local control daemon.
+Maintainer: EverettJF
+Author: EverettJF
+Section: Development
+Depends: mobilesubstrate
+Homepage: https://github.com/everettjf/appletrace
