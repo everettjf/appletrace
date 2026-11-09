@@ -6,8 +6,8 @@
 # device via `devicectl`, runs the experimental scenario (super dispatch,
 # cross-thread events, stack-passed / floating-point arguments, small
 # aggregate returns), pulls the trace back, and asserts the hook produced the
-# expected events. Runs in both the text and binary (APPLETRACE_BINARY=1)
-# output modes.
+# expected events. Runs in both the binary (default) and text
+# (APPLETRACE_FORMAT=text) output modes, merging with the `appletrace` CLI.
 #
 # Unlike scripts/test_objc_msgsend_hook.sh (Simulator) this needs a real,
 # unlocked, developer-enabled device and a signing identity, so it is a local
@@ -41,10 +41,12 @@ for dev in devices:
     conn = dev.get("connectionProperties", {})
     if hw.get("platform") != "iOS":
         continue
-    if conn.get("tunnelState") != "connected":
-        continue
     udid = hw.get("udid", "")
-    if requested and requested not in (udid, dev.get("identifier")):
+    if requested:
+        # devicectl reconnects an idle, paired device on demand.
+        if requested not in (udid, dev.get("identifier")):
+            continue
+    elif conn.get("tunnelState") != "connected":
         continue
     print(dev.get("identifier"), udid, dev.get("deviceProperties", {}).get("name", ""))
     break
@@ -61,6 +63,9 @@ DEVICE_UDID="$(awk '{print $2}' <<<"${device_line}")"
 DEVICE_NAME="$(cut -d' ' -f3- <<<"${device_line}")"
 
 echo "[1/4] Using device: ${DEVICE_NAME} (${DEVICE_UDID})"
+
+(cd "${ROOT_DIR}" && swift build --product appletrace >/dev/null)
+CLI="$(cd "${ROOT_DIR}" && swift build --product appletrace --show-bin-path)/appletrace"
 
 echo "[2/4] Building sample app"
 xcodebuild \
@@ -92,7 +97,7 @@ xcrun devicectl device install app --device "${DEVICE_ID}" "${APP_PATH}" >/dev/n
 
 run_mode() {
   local label="$1"      # text | binary
-  local binary_env="$2" # "" or "\"APPLETRACE_BINARY\":\"1\","
+  local format_env="$2" # extra JSON env entries, e.g. "\"APPLETRACE_FORMAT\":\"text\","
   local out_dir="${DERIVED_DATA_DIR}/trace-${label}"
   rm -rf "${out_dir}"
   mkdir -p "${out_dir}"
@@ -101,7 +106,7 @@ run_mode() {
   xcrun devicectl device process launch \
     --device "${DEVICE_ID}" \
     --terminate-existing \
-    --environment-variables "{${binary_env}\"APPLETRACE_EXPERIMENTAL_SCENARIO\":\"1\"}" \
+    --environment-variables "{${format_env}\"APPLETRACE_EXPERIMENTAL_SCENARIO\":\"1\"}" \
     "${APP_BUNDLE_ID}" >/dev/null
 
   sleep "${WAIT_SECONDS}"
@@ -127,7 +132,11 @@ run_mode() {
     fi
   done
 
-  python3 "${ROOT_DIR}/merge.py" -d "${out_dir}" >/dev/null
+  "${CLI}" merge "${out_dir}" >/dev/null
+  case "${label}" in
+    text) ls "${out_dir}"/trace*.appletrace >/dev/null ;;
+    binary) ls "${out_dir}"/trace*.appletracebin >/dev/null ;;
+  esac
   python3 - "${out_dir}/trace.json" "${label}" <<'PY'
 import json
 import sys
@@ -154,7 +163,7 @@ print(f"[{label}] OK: {len(events)} events, all expected hooked methods present"
 PY
 }
 
-run_mode text ""
-run_mode binary '"APPLETRACE_BINARY":"1",'
+run_mode text '"APPLETRACE_FORMAT":"text",'
+run_mode binary ""
 
 echo "on-device objc_msgSend smoke test passed (text + binary)"

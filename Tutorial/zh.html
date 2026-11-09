@@ -36,6 +36,7 @@
         <h4>工作流</h4>
         <a href="#visualize">在 Perfetto 查看</a>
         <a href="#demos">示例 App</a>
+        <a href="#jailbreak">越狱设备</a>
         <h4>参考</h4>
         <a href="#env">环境变量</a>
         <a href="#platforms">平台支持</a>
@@ -77,7 +78,7 @@
 
         <section id="introduction">
             <h2>简介</h2>
-            <p>AppleTrace 给你的 App 埋点——加 marker、标注 Swift 函数、或 hook 消息发送——把事件时间线写进沙盒里的 <em>trace 片段</em>。一套小的 Python 流水线把这些片段合并成一个 <code>trace.json</code>，直接在 Perfetto 里打开，查看调用时间线、耗时、线程与计数器。</p>
+            <p>AppleTrace 给你的 App 埋点——加 marker、标注 Swift 函数、或 hook 消息发送——把事件时间线写进沙盒里的 <em>trace 片段</em>。<code>appletrace</code> 命令行工具负责把片段从设备上拉下来、合并成一个 <code>trace.json</code> 并在 Perfetto 里打开，查看调用时间线、耗时、线程与计数器。</p>
             <p>产生事件有三种方式，按需选用，它们都落进同一条 trace：</p>
             <div class="grid2">
                 <div class="card">
@@ -107,27 +108,26 @@
 cd AppleTrace
 open sample/AppleTraceSwiftDemo/AppleTraceSwiftDemo.xcodeproj</code></pre></div>
                 </li>
-                <li><strong>运行</strong>（模拟器或真机），点击 <strong>Generate Trace</strong>。App 会跑一段多线程负载，并显示磁盘上的 <em>trace 目录</em>。</li>
-                <li><strong>在 Mac 上合并片段</strong>：
-                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">复制</button></div><pre><code>python3 merge.py -d "&lt;App 中显示的 trace 目录&gt;"
-# → 在片段旁生成 trace.json</code></pre></div>
+                <li><strong>先运行一次</strong>（真机或模拟器），完成安装。</li>
+                <li><strong>一条命令录制</strong>——启动、等待、停止、拉取、合并并打开 Perfetto：
+                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">复制</button></div><pre><code>swift run appletrace record --bundle-id com.everettjf.AppleTraceSwiftDemo \
+  --env APPLETRACE_AUTORUN=1 --open</code></pre></div>
                 </li>
-                <li><strong>在 Perfetto 打开。</strong>进入 <a href="https://ui.perfetto.dev" target="_blank" rel="noopener">ui.perfetto.dev</a>，把 <code>trace.json</code> 拖进去即可。</li>
             </ol>
-            <div class="callout tip"><span class="ic">💡</span><p>想更快？<code>sh go.sh "&lt;trace 目录&gt;"</code> 一步完成合并并打开 Perfetto。</p></div>
+            <div class="callout tip"><span class="ic">💡</span><p>在模拟器上，点击 <strong>Generate Trace</strong>，再执行 App 中显示的 <code>swift run appletrace open &lt;dir&gt;</code>。trace 只交给你浏览器里的 Perfetto，不会上传。</p></div>
         </section>
 
         <section id="installation">
             <h2>安装</h2>
             <h3>环境要求</h3>
             <ul>
-                <li>Xcode、Python 3、浏览器（Perfetto 在 <a href="https://ui.perfetto.dev" target="_blank" rel="noopener">ui.perfetto.dev</a>）。</li>
-                <li><code>ldid</code> 仅在重签 loader 时需要；<code>pytest</code> 仅跑测试时需要。</li>
+                <li>Xcode 16+（Swift 6）、macOS 12+、浏览器（Perfetto 在 <a href="https://ui.perfetto.dev" target="_blank" rel="noopener">ui.perfetto.dev</a>）。App 需要 iOS 15+ / macOS 12+。</li>
+                <li><code>ldid</code>、<code>xz</code> 仅在构建越狱安装包时需要；Python 仅用于旧版 <code>merge.py</code>。</li>
             </ul>
 
             <h3>Swift Package（Swift 项目，也是新项目最干净的方式）</h3>
             <div class="code"><div class="code-head"><span class="lang">swift — Package.swift</span><button class="copy">复制</button></div><pre><code>dependencies: [
-    .package(url: "https://github.com/everettjf/AppleTrace.git", branch: "master"),
+    .package(url: "https://github.com/everettjf/AppleTrace.git", from: "2.0.0"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [
@@ -138,7 +138,7 @@ targets: [
 ]</code></pre></div>
 
             <h3>嵌入 framework（Objective-C / C / C++）</h3>
-            <p>打开 <code>appletrace/appletrace.xcodeproj</code> 构建 framework，把 <code>appletrace.framework</code> 嵌入你的 target。可参考 <code>sample/TraceAllMsgDemo</code>。</p>
+            <p>使用 <a href="https://github.com/everettjf/appletrace/releases" target="_blank" rel="noopener">release</a> 中的 <code>appletrace.xcframework</code>，或打开 <code>appletrace/appletrace.xcodeproj</code> 构建 framework，把 <code>appletrace.framework</code> 嵌入你的 target。可参考 <code>sample/TraceAllMsgDemo</code>。</p>
         </section>
 
         <section id="manual">
@@ -164,9 +164,10 @@ targets: [
 
 void safer() {
     APTScopeSection("decode");      // RAII：作用域结束自动 end
+    APTScopeSection("inner");       // 同一作用域可以用多个
     // ... 工作 ...
 }</code></pre></div>
-            <div class="callout warn"><span class="ic">⚠️</span><p>事件按线程缓冲，在达到阈值、调用 <code>APTFlush()</code>、或线程退出时落盘。读取 trace 前<strong>务必调用 <code>APTFlush()</code></strong>（比如进入后台时），否则短小的运行可能看起来是空的。</p></div>
+            <div class="callout tip"><span class="ic">💡</span><p>事件按线程缓冲，每秒（<code>APPLETRACE_FLUSH_INTERVAL_MS</code>）、进入后台时、线程退出和进程退出时写入内存映射文件——即使 App 被杀，trace 也能读出来。只有在进程内读取 trace 时才需要调用 <code>APTFlush()</code>。</p></div>
         </section>
 
         <section id="swift">
@@ -175,22 +176,30 @@ void safer() {
             <h3>作用域 span 与宏</h3>
             <div class="code"><div class="code-head"><span class="lang">swift</span><button class="copy">复制</button></div><pre><code>import AppleTrace
 
-// 作用域 span——即使 throw / 提前返回也会闭合：
+// 作用域 span——即使 throw / 提前返回也会闭合。字面量名字匹配 StaticString
+// 重载，直接传给 C 内核，不分配内存。
 withSpan("loadFeed") { try? loadFeed() }
 
-// 标注函数。section 以 #function 命名，对 final 类、struct、protocol
-// 方法都生效——begin/end 在编译期插入函数体，绕开了派发问题。
-@Traced
-func decodeImage() { /* ... */ }
+// 异步工作可能在另一个线程恢复，用 async span：
+let feed = try await withAsyncSpan("fetchFeed") { try await api.feed() }
 
-// @TraceAll 给每个有函数体的方法都加上 @Traced：
+// 标注函数。begin/end 在编译期插入函数体，对 final 类、struct、actor、
+// protocol 方法都生效。
+@Traced
+func decodeImage() { /* span 名 "decodeImage()" */ }
+
+// @TraceAll 给每个有函数体的方法和构造器加上 @Traced，名字带类型限定：
+// "FeedViewModel.reload(force:)"。
 @TraceAll
 final class FeedViewModel {
-    func reload() { /* 已追踪 */ }
-    func render() { /* 已追踪 */ }
+    func reload(force: Bool) { /* 已追踪 */ }
+    func refresh() async throws { /* async span——跨 await 也安全 */ }
+    @NotTraced func hotPath() { /* 不追踪 */ }
 }
 
-APTFlush()   // 或 AppleTrace.flush()</code></pre></div>
+@Traced("feed.decode")   // 显式命名
+func decode() { /* ... */ }</code></pre></div>
+            <div class="callout"><span class="ic">✅</span><p><strong><code>async</code> 函数使用 async span。</strong>section 必须在同一线程开始和结束，但 <code>await</code> 之后可能换线程恢复；因此 <code>@Traced</code> 对 <code>async</code> 函数生成带每次调用唯一 id 的 async begin/end，Perfetto 会单独画一条轨道。</p></div>
             <h3>零标注自动追踪</h3>
             <p>可选的 <code>AppleTraceAuto</code> 桥接 <a href="https://github.com/johnno1962/SwiftTrace" target="_blank" rel="noopener">SwiftTrace</a>，无需标注即可 hook 类层级：</p>
             <div class="code"><div class="code-head"><span class="lang">swift</span><button class="copy">复制</button></div><pre><code>import AppleTraceAuto
@@ -207,9 +216,13 @@ AppleTraceAuto.trace(aClass: FeedViewModel.self)   // 进入/退出 → AppleTra
             <div class="code"><div class="code-head"><span class="lang">objective-c</span><button class="copy">复制</button></div><pre><code>// 例如在 application:didFinishLaunchingWithOptions: 早期
 if (APTInstallObjcMsgSendHook()) {
     NSLog(@"AppleTrace: objc_msgSend hook 已安装");
-}</code></pre></div>
+}
+// Swift：AppleTrace.installObjCMsgSendHook()
+// 完全不改代码：启动时设置 APPLETRACE_AUTO_HOOK_OBJC_MSGSEND=1
+//   （`appletrace record --hook` 就是这么做的）</code></pre></div>
             <p>每次被追踪的发送会变成 <code>[类]方法</code> 的 begin/end 对。完整示例见 <code>sample/TraceAllMsgDemo</code>，其中验证了浮点参数、结构体返回与 <code>super</code> 派发的处理。</p>
-            <div class="callout"><span class="ic">✅</span><p><strong>已支持 arm64e。</strong>后端会为 chained-fixup <code>__auth_got</code> 槽重新进行 PAC 签名，并已在运行 iOS 27 的 iPhone 17 Pro 上以 text、binary 两种 trace 模式完成验证。</p></div>
+            <div class="callout"><span class="ic">✅</span><p><strong>已支持 arm64e。</strong>后端会为 chained-fixup <code>__auth_got</code> 槽重新进行 PAC 签名，已在 iPhone 17 Pro（iOS 27）和 iPhone 11（iOS 26.0.1）上验证。之后 <code>dlopen</code> 加载的镜像也会被重绑定。</p></div>
+            <div class="callout warn"><span class="ic">⚠️</span><p>部署目标为 iOS 14+ / macOS 11+ 时，clang 会把部分 <code>alloc</code>、<code>init</code>、<code>class</code>、<code>self</code> 消息发送改为直接调用 <code>objc_alloc_init</code> / <code>objc_opt_*</code>，因此它们不会作为 hook 事件出现。</p></div>
         </section>
 
         <section id="events">
@@ -222,7 +235,7 @@ APTInstant("cache_miss");
 APTCounter("resident_mb", 142.5);
 
 // 跨线程/队列的工作，按 (name, id) 匹配 → 异步弧
-uint64_t reqID = 42;
+uint64_t reqID = APTNewAsyncID();   // 进程内唯一
 APTAsyncBegin("image_load", reqID);
 dispatch_async(queue, ^{
     APTAsyncEnd("image_load", reqID);
@@ -234,27 +247,22 @@ dispatch_async(queue, ^{
                 <tr><td>Counter</td><td><code>APTCounter</code></td><td>曲线轨道</td></tr>
                 <tr><td>Async</td><td><code>APTAsyncBegin</code> / <code>APTAsyncEnd</code></td><td>可跨线程的弧</td></tr>
             </table>
-            <p>Swift 封装一一对应：<code>traceInstant</code>、<code>traceCounter</code>、<code>asyncBegin</code>、<code>asyncEnd</code>。</p>
+            <p>Swift 封装一一对应：<code>traceInstant</code>、<code>traceCounter</code>、<code>newAsyncID</code>、<code>asyncBegin</code>、<code>asyncEnd</code>、<code>withAsyncSpan</code>。</p>
         </section>
 
         <section id="visualize">
             <h2>在 Perfetto 查看</h2>
-            <h3>1 · 拉取 trace 片段</h3>
-            <p>片段写在 <code>&lt;app 沙盒&gt;/Library/appletracedata</code>。</p>
-            <ul>
-                <li><strong>模拟器：</strong>目录就在 Mac 本地，示例 App 会显示路径。</li>
-                <li><strong>真机：</strong>Xcode ▸ <em>Window ▸ Devices and Simulators ▸ Download Container</em>，或 <code>xcrun devicectl device copy from … --domain-type appDataContainer --source Library/appletracedata --destination ./trace</code>。</li>
-            </ul>
-            <h3>2 · 合并</h3>
-            <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">复制</button></div><pre><code>python3 merge.py -d /path/to/appletracedata     # → trace.json
-# 或统一 CLI：
-python3 scripts/appletrace_cli.py open /path/to/appletracedata
-# 或合并并打开 Perfetto：
-sh go.sh /path/to/appletracedata</code></pre></div>
-            <h3>3 · 浏览</h3>
-            <p>把 <code>trace.json</code> 拖进 <a href="https://ui.perfetto.dev" target="_blank" rel="noopener">ui.perfetto.dev</a>。用 <kbd>W</kbd>/<kbd>S</kbd> 缩放、<kbd>A</kbd>/<kbd>D</kbd> 平移，搜索框可跳转到切片。</p>
-            <h3>二进制片段（可选，更小更快）</h3>
-            <p>设置 <code>APPLETRACE_BINARY=1</code> 改写紧凑的二进制片段格式。<code>merge.py</code> 对两种格式都透明解码——工作流不变。</p>
+            <p>片段写在 <code>&lt;app 沙盒&gt;/Library/appletracedata</code>，其余交给 <code>appletrace</code> CLI：</p>
+            <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">复制</button></div><pre><code># 一步到位（已连接设备上开发证书签名的 App）：
+swift run appletrace record --bundle-id com.example.MyApp --duration 15 --hook --open
+
+# 或分步：
+swift run appletrace pull  --bundle-id com.example.MyApp -o mytrace   # devicectl 拷贝
+swift run appletrace merge mytrace                                    # → mytrace/trace.json
+swift run appletrace open  mytrace                                    # → Perfetto</code></pre></div>
+            <p><code>appletrace open</code> 在 <code>127.0.0.1</code> 上提供一个小页面，通过 Perfetto 的 postMessage 接口把 trace 交给浏览器里的 <a href="https://ui.perfetto.dev" target="_blank" rel="noopener">ui.perfetto.dev</a>——文件不会上传。也可以自己把 <code>trace.json</code> 拖进去。用 <kbd>W</kbd>/<kbd>S</kbd> 缩放、<kbd>A</kbd>/<kbd>D</kbd> 平移，搜索框可跳转到切片。</p>
+            <h3>二进制与文本片段</h3>
+            <p>默认写二进制片段（热路径上没有字符串格式化，体积约为文本的一半）。设置 <code>APPLETRACE_FORMAT=text</code> 可写人类可读的 JSON 行。<code>appletrace merge</code>（以及旧版 <code>merge.py</code>）两种都能解码，包括被杀进程留下的片段。</p>
         </section>
 
         <section id="demos">
@@ -264,19 +272,39 @@ sh go.sh /path/to/appletracedata</code></pre></div>
                 <tr><td><code>sample/AppleTraceSwiftDemo</code></td><td>Swift</td><td><code>withSpan</code> + <code>@Traced</code>/<code>@TraceAll</code> 宏、counter/async，以及 <code>AppleTraceAuto</code> hook</td></tr>
                 <tr><td><code>sample/TraceAllMsgDemo</code></td><td>Objective-C</td><td>手动 <code>APTBeginSection</code> section 与自动 <code>objc_msgSend</code> hook</td></tr>
             </table>
-            <p>每个引导式 App 都有 <strong>Generate Trace</strong> 按钮，显示 trace 目录并打印合并/Perfetto 命令。Swift demo 依赖本地包，请从仓库内打开，让 Xcode 自动解析 product。</p>
+            <p>每个引导式 App 都有 <strong>Generate Trace</strong> 按钮，显示 trace 目录并打印对应的 <code>appletrace</code> 命令。Swift demo 依赖本地包，请从仓库内打开，让 Xcode 自动解析 product。</p>
+        </section>
+
+        <section id="jailbreak">
+            <h2>在越狱设备上追踪任意 App</h2>
+            <p>AppleTraceLoader 插件会把 AppleTrace 注入到你指定的 App，支持 <strong>rootless</strong>（<code>/var/jb</code>，如 Dopamine）与 <strong>roothide</strong> 越狱。它根据自身路径推导越狱根目录，同一份二进制两种越狱都能用。</p>
+            <ol class="steps">
+                <li><strong>安装插件包</strong>——rootless 用 <code>appletrace-loader_&lt;version&gt;_iphoneos-arm64.deb</code>，roothide 用 <code>…_iphoneos-arm64e.deb</code>：
+                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">复制</button></div><pre><code>swift run appletrace jb install appletrace-loader_2.0.0_iphoneos-arm64e.deb --host &lt;设备地址&gt;</code></pre></div>
+                </li>
+                <li><strong>录制 App</strong>——以开启追踪的状态重启 App，结束后通过 SSH 拉取并合并：
+                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">复制</button></div><pre><code>swift run appletrace jb record com.example.App --host &lt;设备地址&gt; \
+  --duration 15 --hook --allow "EX,App" --open</code></pre></div>
+                </li>
+            </ol>
+            <p>也可以分步：<code>jb enable &lt;bundle-id&gt; --hook</code>，操作 App，<code>jb pull &lt;bundle-id&gt;</code>，<code>open appletracedata-&lt;bundle-id&gt;</code>，最后 <code>jb disable &lt;bundle-id&gt;</code>。<code>enable</code> 会写入 <code>&lt;jbroot&gt;/var/mobile/Library/AppleTrace/&lt;bundle-id&gt;.plist</code>；loader 只处理有该文件的 App。</p>
+            <div class="callout tip"><span class="ic">💡</span><p>SSH 需要密钥登录（<code>ssh-copy-id</code>）。通过 USB 时可用 <code>iproxy 2222 22</code> 转发端口，再传 <code>--host 127.0.0.1 --port 2222</code>。</p></div>
         </section>
 
         <section id="env">
             <h2>环境变量</h2>
             <table>
                 <tr><th>变量</th><th>默认</th><th>作用</th></tr>
-                <tr><td><code>APPLETRACE_ENABLED</code></td><td><code>true</code></td><td>录制总开关。</td></tr>
-                <tr><td><code>APPLETRACE_BINARY</code></td><td><code>false</code></td><td>写二进制片段而非文本。</td></tr>
+                <tr><td><code>APPLETRACE_ENABLED</code></td><td><code>1</code></td><td>录制总开关。</td></tr>
+                <tr><td><code>APPLETRACE_FORMAT</code></td><td><code>binary</code></td><td><code>binary</code> 或 <code>text</code>（JSON 行）。<code>APPLETRACE_BINARY=0/1</code> 仍然有效。</td></tr>
+                <tr><td><code>APPLETRACE_FLUSH_INTERVAL_MS</code></td><td><code>1000</code></td><td>后台刷盘间隔；<code>0</code> 表示关闭。</td></tr>
+                <tr><td><code>APPLETRACE_AUTO_HOOK_OBJC_MSGSEND</code></td><td><code>0</code></td><td>加载时安装 <code>objc_msgSend</code> hook。</td></tr>
+                <tr><td><code>APPLETRACE_TRACE_CLASS_ALLOW</code> / <code>_DENY</code></td><td>—</td><td>逗号分隔的类名前缀白名单 / 黑名单。</td></tr>
                 <tr><td><code>APPLETRACE_DATA_DIR</code></td><td><em>沙盒</em></td><td>覆盖片段写入目录。</td></tr>
                 <tr><td><code>APPLETRACE_BLOCK_SIZE_MB</code></td><td><code>16</code></td><td>每个片段的 mmap 块大小（1–256 MB）。</td></tr>
-                <tr><td><code>APPLETRACE_KEEP_EXISTING</code></td><td><code>false</code></td><td>保留旧 trace 目录而非覆盖。</td></tr>
+                <tr><td><code>APPLETRACE_KEEP_EXISTING</code></td><td><code>0</code></td><td>保留旧 trace 目录而非覆盖。</td></tr>
             </table>
+            <p>格式错误的值会记录日志并被忽略，不会悄悄改变行为。</p>
             <p>代码内也有运行时控制：<code>APTSetEnabled(BOOL)</code>、<code>APTIsEnabled()</code>、<code>APTGetTraceDirectory()</code>、<code>APTFlush()</code>、<code>APTSyncWait()</code>。</p>
         </section>
 
@@ -288,6 +316,7 @@ sh go.sh /path/to/appletracedata</code></pre></div>
                 <tr><td>Swift 宏（<code>@Traced</code>/<code>@TraceAll</code>/<code>withSpan</code>）</td><td>模拟器<strong>与真机</strong></td></tr>
                 <tr><td><code>objc_msgSend</code> hook</td><td>arm64 与 arm64e</td></tr>
                 <tr><td><code>AppleTraceAuto</code>（SwiftTrace）</td><td>仅模拟器 / macOS</td></tr>
+                <tr><td>越狱 loader</td><td>rootless 与 roothide 越狱（arm64 / arm64e）</td></tr>
             </table>
             <h3>为什么 Swift 需要源码级追踪</h3>
             <p>Swift 为性能绕开消息派发：<code>struct</code>/<code>final</code> 方法与全模块优化的调用走<em>静态</em>派发；类方法走 <em>vtable</em>；protocol 方法走 <em>witness table</em>。它们都不经过 <code>objc_msgSend</code>，所以自动 hook 只能看到很薄的 <code>@objc dynamic</code> 表面。宏直接在源码插桩，因此覆盖全部四种派发。</p>
@@ -296,9 +325,11 @@ sh go.sh /path/to/appletracedata</code></pre></div>
         <section id="faq">
             <h2>FAQ 与排查</h2>
             <h4>trace 是空的 / 只有元数据</h4>
-            <p>writer 按线程批量缓冲。读取前调用 <code>APTFlush()</code>（如进入后台、或场景结束时）。示例 App 已替你 flush。</p>
-            <h4>构建报错：<code>SDK does not contain 'libarclite'</code></h4>
-            <p>部署目标过旧。把 <code>IPHONEOS_DEPLOYMENT_TARGET</code> 设为 12.0 或更高——新版 Xcode 移除了 pre-12 的 ARC 兼容库。</p>
+            <p>writer 每秒、进入后台和退出时都会刷盘。如果在 App 运行时拉取，先等一秒（<code>appletrace record</code> 会自动等），或调用 <code>APTFlush()</code>。另外确认 <code>APPLETRACE_ENABLED</code> 不是 <code>0</code>。</p>
+            <h4>部署目标相关的构建错误</h4>
+            <p>AppleTrace 2.0 需要 iOS 15+ / macOS 12+，这是当前 Xcode 接受的最低版本。</p>
+            <h4><code>@Traced async</code> 函数显示在单独的轨道上，而不是线程上</h4>
+            <p>这是预期行为：<code>await</code> 之后可能换线程，所以 <code>async</code> 函数使用 async span。</p>
             <h4>Swift app 启动崩溃 <code>Library not loaded: @rpath/SwiftTrace.framework</code></h4>
             <p>app target 需要 <code>LD_RUNPATH_SEARCH_PATHS = @executable_path/Frameworks</code>，dyld 才能在真机上找到内嵌的动态 framework。</p>
             <h4><code>AppleTraceAuto</code> 某些方法追踪不到</h4>

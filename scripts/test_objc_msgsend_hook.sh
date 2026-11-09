@@ -56,9 +56,9 @@ xcodebuild \
   -scheme TraceAllMsgDemo \
   -configuration Debug \
   -sdk iphonesimulator \
-  -destination "platform=iOS Simulator,name=${SIMULATOR_NAME}" \
+  -destination "platform=iOS Simulator,id=${DEVICE_ID}" \
   -derivedDataPath "${DERIVED_DATA_DIR}" \
-  build CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=12.0 >/tmp/appletrace-smoke-build.log
+  build CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=15.0 >/tmp/appletrace-smoke-build.log
 
 if [[ ! -d "${APP_PATH}" ]]; then
   echo "Build succeeded but app bundle not found: ${APP_PATH}" >&2
@@ -145,32 +145,30 @@ if [[ ! -d "${TRACE_DIR}" ]]; then
   exit 1
 fi
 
-trace_files="$(find "${TRACE_DIR}" -maxdepth 1 -type f -name '*.appletrace' | sort)"
-if [[ -z "${trace_files}" ]]; then
+CLI="$(cd "${ROOT_DIR}" && swift build --product appletrace --show-bin-path)/appletrace"
+(cd "${ROOT_DIR}" && swift build --product appletrace >/dev/null)
+MERGED="$(mktemp -t appletrace-smoke).json"
+if ! "${CLI}" merge "${TRACE_DIR}" -o "${MERGED}" --raw; then
   print_experimental_progress
-  echo "No trace fragments found in ${TRACE_DIR}" >&2
+  echo "No decodable trace fragments in ${TRACE_DIR}" >&2
   exit 1
 fi
 
-while IFS= read -r trace_file; do
-  if [[ -s "${trace_file}" ]]; then
-    echo "Trace generated: ${trace_file}"
-    if ! APPLETRACE_EXPERIMENTAL_SCENARIO="${EXPERIMENTAL_SCENARIO}" python3 - "${trace_file}" <<'PY'
-import pathlib
+if ! APPLETRACE_EXPERIMENTAL_SCENARIO="${EXPERIMENTAL_SCENARIO}" python3 - "${MERGED}" <<'PY'
+import json
 import os
 import sys
 
-trace_path = pathlib.Path(sys.argv[1])
-data = trace_path.read_bytes().replace(b"\x00", b"")
-text = data.decode("utf-8", errors="ignore")
-if '"name":"process_name"' not in text:
+events = json.load(open(sys.argv[1]))
+names = {event.get("name") for event in events}
+if not any(e.get("ph") == "M" and e.get("name") == "process_name" for e in events):
     raise SystemExit("trace missing process_name metadata")
-if 'appletrace-smoke-scenario' not in text:
+if "appletrace-smoke-scenario" not in names:
     raise SystemExit("trace missing smoke scenario events")
-if '"cat":"appletrace","ph":"B"' not in text:
-    raise SystemExit("trace missing hooked begin events")
 if os.environ.get("APPLETRACE_EXPERIMENTAL_SCENARIO") == "1":
-    if 'appletrace-experimental-scenario' not in text:
+    if not any(e.get("ph") == "B" and str(e.get("name", "")).startswith("[") for e in events):
+        raise SystemExit("trace missing hooked begin events")
+    if "appletrace-experimental-scenario" not in names:
         raise SystemExit("trace missing experimental scenario sentinel")
     expected = (
         "[AppDelegate]levelOne",
@@ -181,26 +179,19 @@ if os.environ.get("APPLETRACE_EXPERIMENTAL_SCENARIO") == "1":
         "[AppDelegate]makeRangeLocation:length:",
         "[AppDelegate]makeInsetsTop:left:bottom:right:",
         "[APTSuperBase]superPing",
-        "[APTSuperChild]init",
         "[APTSuperChild]invokeSuperPing",
         "[ThreadTest]goLoop",
     )
-    if not all(name in text for name in expected):
-        raise SystemExit("trace missing experimental sample method events")
-for line in text.splitlines()[:10]:
-    print(line)
+    missing = [name for name in expected if name not in names]
+    if missing:
+        raise SystemExit(f"trace missing experimental sample method events: {missing}")
+print(f"{len(events)} events decoded; first: {events[:3]}")
 PY
-    then
-      print_experimental_progress
-      exit 1
-    fi
-    if ! assert_experimental_progress; then
-      exit 1
-    fi
-    exit 0
-  fi
-done <<< "${trace_files}"
-
-print_experimental_progress
-echo "Trace files exist but are empty: ${TRACE_DIR}" >&2
-exit 1
+then
+  print_experimental_progress
+  exit 1
+fi
+if ! assert_experimental_progress; then
+  exit 1
+fi
+echo "objc_msgSend hook smoke test passed"

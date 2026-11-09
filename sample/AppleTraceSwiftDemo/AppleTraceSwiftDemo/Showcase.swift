@@ -51,6 +51,27 @@ final class FeedViewModel {
     func layout() { usleep(700) }
 }
 
+// `async` functions get an async span (its own Perfetto track), so a call that
+// resumes on another thread after `await` is still drawn as one slice.
+actor FeedStore {
+    private var pages = 0
+
+    @Traced
+    func refresh() async -> Int {
+        try? await Task.sleep(nanoseconds: 4_000_000)
+        pages += 1
+        return pages
+    }
+
+    @Traced("FeedStore.prefetch")
+    func prefetch(_ count: Int) async {
+        for _ in 0..<count {
+            await Task.yield()
+            usleep(500)
+        }
+    }
+}
+
 // MARK: - The showcase
 
 enum SwiftShowcase {
@@ -131,6 +152,20 @@ enum SwiftShowcase {
             }
         }
         group.wait()
+
+        // Phase 4 — Swift concurrency: @Traced async methods hop threads freely.
+        let store = FeedStore()
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            await withTaskGroup(of: Void.self) { tasks in
+                for _ in 0..<3 {
+                    tasks.addTask { _ = await store.refresh() }
+                }
+                tasks.addTask { await store.prefetch(4) }
+            }
+            done.signal()
+        }
+        done.wait()
 
         traceInstant("scenario_complete")
         flush()   // batched per thread; flush before reading the trace

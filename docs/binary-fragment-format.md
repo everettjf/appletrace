@@ -1,12 +1,9 @@
 # AppleTrace Binary Fragment Format
 
-Status: format locked; **exporter implemented and tested**
-(`appletrace_binary.py`, wired into `merge.py`); **native writer implemented**
-(opt-in `APPLETRACE_BINARY=1`, **verified on the macOS host stress test** —
-`scripts/test_batching_stress.sh` runs the binary mode through 200k cross-thread
-event pairs with no loss or duplication). This is the follow-on to the
-per-thread batching work in
-[perf-batching-design.md](perf-batching-design.md).
+Status: **default output format since 2.0** (`APPLETRACE_FORMAT=text` selects
+JSON lines). Decoded by `AppleTraceKit` (the `appletrace merge` CLI) and by the
+legacy `appletrace_binary.py` / `merge.py`. Verified by the host stress test
+(`scripts/test_batching_stress.sh`) and on-device runs.
 
 ## Why
 
@@ -70,7 +67,7 @@ float (e.g. `142.5`), matching the text producer.
 
 ## Runtime producer (implemented)
 
-The native writer in `appletrace.mm` is enabled by `APPLETRACE_BINARY=1`:
+The native writer in `appletrace.mm` is the default (`APPLETRACE_FORMAT=binary`):
 
 - Appends fixed-layout records to the per-thread batch buffer (byte buffers
   after the batching change) instead of JSON text.

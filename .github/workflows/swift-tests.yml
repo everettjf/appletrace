@@ -13,7 +13,7 @@ jobs:
       - name: Swift version
         run: swift --version
 
-      - name: Run package tests (macros + runtime)
+      - name: Run package tests (macros, runtime, decoder)
         run: swift test
         env:
           APPLETRACE_DATA_DIR: ${{ runner.temp }}/appletracedata-tests
@@ -23,12 +23,22 @@ jobs:
         env:
           APPLETRACE_DATA_DIR: ${{ runner.temp }}/appletracedata-example
 
+      - name: Smoke-test the appletrace CLI
+        run: |
+          swift run appletrace version
+          swift run appletrace merge sampledata -o "${RUNNER_TEMP}/sample.json"
+
       - name: Build both routes for the iOS Simulator
         run: |
           xcodebuild -scheme AppleTrace \
             -destination 'generic/platform=iOS Simulator' build
           xcodebuild -scheme AppleTraceAuto \
             -destination 'generic/platform=iOS Simulator' build
+
+      - name: Build the AppleTrace route for an iOS device (arm64 hook)
+        run: |
+          xcodebuild -scheme AppleTrace \
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
 
       - name: Build the Swift demo app for the iOS Simulator
         # Note: -destination only, no -sdk (that would force the macro plugin
@@ -39,3 +49,23 @@ jobs:
             -scheme AppleTraceSwiftDemo \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO build
+
+  hook-host:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: objc_msgSend hook on the arm64 host (incl. late dlopen)
+        run: ./scripts/test_hook_host.sh
+
+  jailbreak-packages:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install packaging tools
+        run: brew install ldid xz
+      - name: Build rootless + roothide loader packages
+        run: ./scripts/build_jailbreak_packages.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appletrace-loader-debs
+          path: build/jailbreak/*.deb

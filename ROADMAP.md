@@ -1,122 +1,76 @@
-# AppleTrace Optimization & Roadmap
+# AppleTrace Roadmap
 
-> Status: AppleTrace is actively developed. This document captures the
-> optimization opportunities, a competitive comparison, and a phased plan that
-> drive the project forward. Items marked ✅ have shipped.
+Status as of 2.0.0 (November 2026). Items marked ✅ have shipped; see
+[CHANGELOG.md](CHANGELOG.md) for details.
 
-## 1. Where We Are Today
+## 1. Where We Are
 
-- **Platform**: arm64 and arm64e. The arm64e backend detects chained-fixup
-  images, signs authenticated GOT replacements with the slot-specific PAC
-  context, and uses PAC/BTI-aware wrappers. It is validated on iOS 27 hardware.
-- **Tracing backends**: manual `APTBeginSection`/`APTEndSection` markers (plus
-  `APTInstant` / `APTCounter` / `APTAsyncBegin` / `APTAsyncEnd`), plus a direct
-  `objc_msgSend` / `objc_msgSendSuper2` rebind
-  (`appletrace/appletrace/src/objc/hook_objc_msgSend.m`).
-- **Runtime**: a single serial dispatch queue serializes one JSON line per event
-  into an mmap-backed file (`appletrace/appletrace/src/appletrace.mm`).
-- **Tooling**: `merge.py` / `scripts/appletrace_cli.py` merge fragments into a
-  Perfetto-compatible `trace.json`; `go.sh` opens it in Perfetto.
-- **Visualization**: Perfetto-only (`ui.perfetto.dev`); no Catapult/Chrome HTML.
-- **CI**: Python merge tests + two simulator smoke tests (`.github/workflows`).
+- **Capture**: manual sections and events (`APTBeginSection`, `APTInstant`,
+  `APTCounter`, `APTAsyncBegin`/`APTAsyncEnd`), Swift `@Traced` / `@TraceAll`
+  macros (type-qualified names, async spans for `async` functions), and the
+  arm64/arm64e `objc_msgSend` / `objc_msgSendSuper2` hook (PAC-aware, rebinding
+  images loaded later too).
+- **Runtime**: per-thread buffers shipped in order to a serial writer that
+  appends to memory-mapped fragments. Binary format by default; the text path
+  formats straight into the thread buffer. Buffers drain every second, on
+  backgrounding and at exit, so killed processes leave readable traces.
+- **Tooling**: the Swift `appletrace` CLI (`merge`, `open`, `devices`, `pull`,
+  `record`, `jb …`) built on `AppleTraceKit`. The Python `merge.py` remains for
+  compatibility.
+- **Distribution**: SwiftPM (`AppleTrace`, `AppleTraceAuto`, `AppleTraceKit`,
+  `appletrace`), an XCFramework and CLI binary on each release, and
+  rootless / roothide `.deb` packages for the jailbreak loader.
+- **Validation**: Swift tests (macros, runtime, async, concurrency, disabled
+  tracing, decoder tolerance), a host stress test across 10 writer
+  configurations, a host hook test, Simulator hook tests, and on-device runs on
+  an iPhone 17 Pro (iOS 27) and an iPhone 11 (iOS 26.0.1).
 
-## 2. Optimization Opportunities
+## 2. Positioning
 
-### 2.1 Hot-path performance (highest impact on trace fidelity)
+| Tool | Mechanism | Strength | Relation to AppleTrace |
+|------|-----------|----------|------------------------|
+| Instruments Processor Trace | Hardware trace (A18 / M4+, iOS 18.4+) | Every call, Swift included, ~1% overhead | Needs recent hardware and Instruments; no CI, no Perfetto export |
+| `os_signpost` / OSSignposter | OS logging | First-party, low overhead | Candidate backend (see Phase 3) |
+| ETTrace | Sampling + flame charts | One-command setup | Sampling, not exact per-call timelines |
+| frida-trace | Dynamic instrumentation | Scriptable, cross-platform | Heavier; AppleTrace stays embeddable and Perfetto-native |
+| InspectiveC, MTHawkeye, SMCallTrace | `objc_msgSend` hooks | — | Mostly unmaintained; no Swift or arm64e story |
 
-The `objc_msgSend` hot path is far too heavy, which distorts the timings it is
-meant to measure:
+AppleTrace's niche: an embeddable, open-source tracer that turns ObjC **and**
+Swift call timelines into Perfetto traces on any device and OS version, in CI,
+and in third-party apps on jailbroken devices.
 
-- `apt_copy_trace_name` (`hook_objc_msgSend.m:360`) does a `malloc` + `snprintf`
-  to build `"[Class]selector"` on **every** message send, with no caching.
-- `Trace::WriteSection` (`appletrace.mm:318`) builds a `std::string` JSON line and
-  `dispatch_async`es it (block copy + enqueue) per event. Under full
-  `objc_msgSend` tracing the serial queue becomes the bottleneck and memory
-  balloons.
+## 3. Plan
 
-Recommended redesign:
+### Phase 1 — Correctness & workflow (2.0) ✅
+- ✅ Async-safe `@Traced`; type-qualified names; `@Traced("name")`; `@NotTraced`.
+- ✅ `StaticString` fast paths for literal names; `APTNewAsyncID`.
+- ✅ Binary format by default; allocation-free text formatting; pointer-cached
+  binary name ids; ordered batch shipping.
+- ✅ Background / lifecycle / exit draining; strict config parsing.
+- ✅ `objc_msgSend` hook in SwiftPM; stub on non-arm64; rebinding for late images.
+- ✅ `appletrace` CLI replacing the Python pipeline.
+- ✅ Rootless / roothide jailbreak loader + `appletrace jb`.
+- ✅ Regression coverage for nesting, concurrency, disabled tracing, malformed
+  configuration, killed processes, and rollover.
 
-- **String interning**: cache the formatted name keyed by `(Class, SEL)` so the
-  hot path stores an integer id, not a freshly allocated string.
-- **Per-thread ring buffers**: record fixed-size binary events
-  `(timestamp, phase, tid, name_id)` lock-free per thread; flush in bulk on a
-  background thread instead of one dispatch per event.
-- **Defer formatting**: emit binary events at runtime and convert to JSON only in
-  `merge.py` (or a new exporter), removing JSON string building from the hot path.
+### Phase 2 — Native Perfetto output
+- Emit Perfetto protobuf (`TrackEvent`) from `AppleTraceKit` for smaller files
+  and faster loading, with interned names, flow events linking `dispatch_async`
+  submit/execute, and per-`Task` tracks for Swift concurrency.
+- Debug annotations (arguments) on sections, behind an opt-in API.
 
-### 2.2 Visualization pipeline modernization (highest ROI / lowest risk)
+### Phase 3 — Complementary backends
+- `os_signpost` backend: the same API, viewable in Instruments.
+- Hook `objc_alloc_init` / `objc_opt_class` / `objc_opt_self` so
+  compiler-lowered sends appear in automatic traces.
+- Experimental: convert Instruments `xctrace export` (incl. Processor Trace)
+  into Perfetto traces.
 
-- ✅ Visualization is now **Perfetto-only** (`ui.perfetto.dev`): it ingests the
-  Chrome JSON `trace.json`, runs entirely in the browser (no download), and
-  scales to far larger traces. The deprecated Catapult `trace2html` pipeline
-  (`get_catapult.sh`, the HTML demo) has been removed.
-- Longer term: emit the Perfetto protobuf format for streaming + smaller files.
+### Phase 4 — Distribution
+- Homebrew tap for the CLI; notarized release binaries.
+- Sileo/Zebra repository for the loader packages.
 
-### 2.3 Trace format & expressiveness
-
-- ✅ Export `X` (complete) events by default to roughly halve file size vs.
-  paired `B`/`E` (`merge.py`; `--raw` keeps the unpaired form).
-- ✅ Emit `thread_name` metadata events so threads are labeled in Perfetto
-  (previously only `process_name` was written).
-- ✅ Add **counter** (`APTCounter`), **instant** (`APTInstant`), and
-  **async/flow** (`APTAsyncBegin` / `APTAsyncEnd`) events to track work across
-  dispatch queues.
-- ✅ Stream `merge.py` output instead of loading every event into memory, so
-  large captures don't exhaust RAM.
-
-### 2.4 Filtering & control
-
-- ✅ Add runtime class-prefix allow/deny lists
-  (`APPLETRACE_TRACE_CLASS_ALLOW` / `APPLETRACE_TRACE_CLASS_DENY`).
-- A sampling mode (trace 1/N sends) is intentionally deferred: it does not
-  compose with the nested begin/end model, so it is not on the near-term plan.
-
-### 2.5 Housekeeping
-
-- ✅ Add the `CONTRIBUTING.md` that the README references.
-- ✅ Support and document arm64 and arm64e; keep x86_64 out of scope for the
-  Objective-C hook.
-
-## 3. Competitive Comparison
-
-| Tool | Mechanism | Strengths | Position vs. AppleTrace |
-|------|-----------|-----------|--------------------------|
-| **Frida / frida-trace** | Dynamic injection | Cross-platform, scriptable, very active | Full-featured but heavier, needs debug/jailbreak posture |
-| **InspectiveC** | fishhook `objc_msgSend` | Per-object / per-class / per-selector filtering | Closest in approach; richer filtering |
-| **Instruments (os_signpost)** | OS-level | First-party, low overhead, strong timeline | Could be a low-overhead backend AppleTrace targets |
-| **Perfetto** | Visualization + SDK | Modern standard, protobuf, scalable UI | Should be AppleTrace's visualization target |
-
-**Differentiation**: AppleTrace's edge is being lightweight, embeddable directly
-in an app (manual sections), and producing shareable artifacts. The roadmap
-should lean into that rather than chasing Frida's full feature set.
-
-## 4. Phased Plan
-
-### Phase 1 — Modernize visualization (low risk, high value)
-- ✅ Make Perfetto (`ui.perfetto.dev`) the only viewer; remove Catapult/Chrome.
-- ✅ Add a `thread_name` metadata event so threads are labeled.
-- ✅ Stream `merge.py` output.
-- ✅ Collapse begin/end pairs into `X` complete events by default,
-  roughly halving section-event count.
-
-### Phase 2 — Hot-path performance
-- ✅ Introduce `(Class, SEL)` name interning.
-- ✅ Use a zero-allocation per-thread call stack (no per-message `malloc`).
-- 🛠️ Move event recording to per-thread batched buffers with bulk background
-  flushing — implemented per
-  [docs/perf-batching-design.md](docs/perf-batching-design.md); **pending macOS
-  build + profiling verification.**
-- 🛠️ Defer JSON formatting to the exporter; emit binary events at runtime.
-  Exporter/decoder implemented + tested (`appletrace_binary.py`, wired into
-  `merge.py`); native writer implemented behind opt-in `APPLETRACE_BINARY=1`
-  (**pending macOS verification**). See
-  [docs/binary-fragment-format.md](docs/binary-fragment-format.md).
-
-### Phase 3 — Expressiveness & control
-- ✅ Add `APTInstant`, `APTCounter`, and `APTAsyncBegin`/`APTAsyncEnd` event APIs.
-- ✅ Add runtime class-prefix allow/deny lists.
-
-### Phase 4 — Reach & polish
-- ✅ Add `CONTRIBUTING.md`.
-- ✅ Scope to arm64 (arm64e dropped; hook hard-errors there).
-- Explore an `os_signpost` backend and/or Perfetto protobuf export.
+### Non-goals
+- A sampling profiler (ETTrace and Instruments cover it).
+- Frida-style scripting.
+- An x86_64 `objc_msgSend` hook.

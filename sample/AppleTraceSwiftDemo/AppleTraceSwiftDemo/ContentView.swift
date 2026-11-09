@@ -81,33 +81,27 @@ struct ContentView: View {
     }
 
     private var guidance: String {
-        let dir = traceDir
         #if targetEnvironment(simulator)
+        let dir = traceDir
         return """
         Running in the Simulator, so the trace is already on this Mac.
 
         1. Tap “Generate Trace” above.
-        2. In the AppleTrace repo, merge the fragments:
-             python3 merge.py -d "\(dir)"
-           (or:  sh go.sh "\(dir)" )
-        3. Open https://ui.perfetto.dev and drag in:
-             \(dir)/trace.json
+        2. In the AppleTrace repo, merge and open it in Perfetto:
+             swift run appletrace open "\(dir)"
         """
         #else
         return """
-        Running on a device, so copy the trace to your Mac first.
+        Running on a device. From the AppleTrace repo on your Mac:
 
-        1. Tap “Generate Trace” above.
-        2. Pull the app’s container, either:
-           • Xcode ▸ Window ▸ Devices and Simulators ▸
-             select this app ▸ ⚙ ▸ Download Container, or
-           • xcrun devicectl device copy from --device <id> \\
-               --domain-type appDataContainer \\
-               --domain-identifier com.everettjf.AppleTraceSwiftDemo \\
-               --source Library/appletracedata --destination ./trace
-        3. Merge and open in Perfetto:
-             python3 merge.py -d <pulled>/Library/appletracedata
-           then drag trace.json into https://ui.perfetto.dev
+        • Record end to end (launch, wait, pull, merge, open):
+             swift run appletrace record \\
+               --bundle-id com.everettjf.AppleTraceSwiftDemo \\
+               --env APPLETRACE_AUTORUN=1 --open
+        • Or, after tapping “Generate Trace”, just pull it:
+             swift run appletrace pull \\
+               --bundle-id com.everettjf.AppleTraceSwiftDemo -o trace
+             swift run appletrace open trace
         """
         #endif
     }

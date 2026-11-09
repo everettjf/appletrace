@@ -17,7 +17,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: Run tests
-        run: python -m pytest tests
+        run: python -m pytest Tests
 
   objc-msgsend-smoke:
     runs-on: macos-latest
@@ -43,5 +43,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Make stress script executable
         run: chmod +x scripts/test_batching_stress.sh
-      - name: Run batched-writer stress test (text + binary)
+      - name: Run batched-writer stress test (formats, drains, SIGKILL, rollover, bad config)
         run: ./scripts/test_batching_stress.sh

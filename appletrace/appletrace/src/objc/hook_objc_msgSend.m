@@ -39,8 +39,18 @@
 #import "appletrace.h"
 
 #if !defined(__arm64__)
-#error AppleTrace objc_msgSend hook requires arm64.
-#endif
+// The hook's assembly wrappers are arm64-only. Other architectures (x86_64
+// Simulator / Intel Mac slices) build a stub so the framework and the SwiftPM
+// package still link everywhere; installing the hook reports failure.
+BOOL APTInstallObjcMsgSendHook(void) {
+    NSLog(@"AppleTrace: the objc_msgSend hook requires arm64 / arm64e");
+    return NO;
+}
+
+BOOL APTIsObjcMsgSendHookInstalled(void) {
+    return NO;
+}
+#else
 
 typedef void (*APTObjcMsgSendFunction)(void);
 typedef void (*APTObjcMsgSendSuper2Function)(void);
@@ -529,7 +539,8 @@ static const char *apt_intern_trace_name(Class cls, SEL selector) {
         return NULL;
     }
 
-    uintptr_t hash = (((uintptr_t)cls >> 3) * 2654435761u) ^ ((uintptr_t)selector >> 3);
+    // SEL values are unique, as are their name pointers; hash the latter.
+    uintptr_t hash = (((uintptr_t)cls >> 3) * 2654435761u) ^ ((uintptr_t)sel_getName(selector) >> 3);
     size_t bucket = hash & (APT_INTERN_BUCKET_COUNT - 1);
 
     os_unfair_lock_lock(&gInternLock);
@@ -778,18 +789,20 @@ static void apt_rebind_symbols_for_image(const struct mach_header *header,
     }
 }
 
+static void apt_rebind_symbols_for_added_image(const struct mach_header *header, intptr_t slide) {
+    apt_rebind_symbols_for_image(header, slide, gRebindingsHead);
+}
+
 static int apt_rebind_symbols(struct APTRebinding rebindings[], size_t count) {
     int failure = apt_prepend_rebindings(&gRebindingsHead, rebindings, count);
     if (failure < 0) {
         return failure;
     }
 
-    for (uint32_t image_index = 0; image_index < _dyld_image_count(); image_index++) {
-        apt_rebind_symbols_for_image(_dyld_get_image_header(image_index),
-                                     _dyld_get_image_vmaddr_slide(image_index),
-                                     gRebindingsHead);
-    }
-
+    // Registering the callback runs it for every image already loaded, and
+    // again for each image dlopen'ed later (frameworks loaded lazily, plugins,
+    // tweaks), so late-loaded code is traced too.
+    _dyld_register_func_for_add_image(apt_rebind_symbols_for_added_image);
     return 0;
 }
 
@@ -813,3 +826,5 @@ BOOL APTInstallObjcMsgSendHook(void) {
 BOOL APTIsObjcMsgSendHookInstalled(void) {
     return gHookInstalled;
 }
+
+#endif  // defined(__arm64__)
