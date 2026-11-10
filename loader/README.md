@@ -32,4 +32,11 @@ appletrace jb install build/jailbreak/appletrace-loader_2.0.0_iphoneos-arm64e.de
 appletrace jb record com.example.App --host <device> --duration 15 --hook --open
 ```
 
+Only `jb install` needs root. With `mobile`-only SSH (e.g. roothide), install
+the `.deb` from Sileo / Zebra and pass `--user mobile` to the other commands.
+
+Each traced app gets `tmp/AppleTraceLoader.log` in its own container with the
+jailbreak root, the hook's rebinding diagnostics, and the trace directory;
+`appletrace jb pull` prints it.
+
 See the README section "Tracing Any App on a Jailbroken Device".

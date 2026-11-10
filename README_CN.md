@@ -389,6 +389,10 @@ AppleTraceLoader 插件会把 AppleTrace 注入到你指定的 App 中，支持 
    appletrace jb install appletrace-loader_2.0.0_iphoneos-arm64e.deb --host <设备地址> [--port 22]
    ```
 
+   `jb install` 会执行 `dpkg`，需要 root SSH。如果只能以 `mobile` 登录（例如 roothide
+   上 `sudo` 需要密码），请改用 Sileo / Zebra 安装 `.deb`，其余 `jb` 命令加
+   `--user mobile` 即可，它们不需要 root。
+
 2. 录制某个 App（它会以开启追踪的状态重新启动，然后被停止、拉取并合并）：
 
    ```bash
@@ -401,9 +405,20 @@ AppleTraceLoader 插件会把 AppleTrace 注入到你指定的 App 中，支持 
    完成后 `appletrace jb disable <bundle-id>`。
 
 `enable` 会写入 `<jbroot>/var/mobile/Library/AppleTrace/<bundle-id>.plist`（要应用的
-`APPLETRACE_*` 变量）。loader 只会处理存在该文件的 App。SSH 需要密钥登录
-（`ssh-copy-id`）；通过 USB 时可以用 `iproxy 2222 22` 转发 22 端口，再传
-`--host 127.0.0.1 --port 2222`。
+`APPLETRACE_*` 变量）。loader 只会处理存在该文件的 App，并在 App 自己的
+`tmp/AppleTraceLoader.log` 里写一行状态（越狱根目录、重绑定诊断、trace 目录），
+`jb pull` 会把它打印出来。SSH 需要密钥登录（`ssh-copy-id`）；通过 USB 时可以用
+`iproxy 2222 22` 转发 22 端口，再传 `--host 127.0.0.1 --port 2222`。额外的 ssh/scp
+参数放在 `APPLETRACE_SSH_OPTIONS` 里（例如 `"-i ~/.ssh/device_key"`）。
+
+**已验证**：roothide 越狱（iPhone 11，iOS 26.0.1）上，一个 Flutter 的 App Store 应用
+录到了 10 个线程上 22,849 次 hook 到的消息发送；类名过滤和文本格式正常；注入后的
+arm64e 系统 App 运行正常。
+
+> **限制——被封存的 App。** iOS 26 上，Apple 自带 App 的只读 `__DATA_CONST` 被映射为
+> 永久不可写区域，GOT 无法重绑定，因此 hook 看不到它们自身的消息发送
+> （`AppleTraceLoader.log` 中显示 `main_executable_slots=0 main_protect=2`）。第三方 App
+> 不受影响，被封存的 App 也会照常运行。
 
 ---
 
@@ -419,6 +434,9 @@ AppleTraceLoader 插件会把 AppleTrace 注入到你指定的 App 中，支持 
 - **自动 hook** 用一段汇编跳板包裹每次被重绑定的消息发送，保留整数、浮点、栈传参和
   聚合返回值的 ABI 状态；已在模拟器、arm64e 的 iPhone 17 Pro（iOS 27）以及
   iPhone 11（iOS 26.0.1）的 arm64 与 arm64e 构建上验证。
+- hook 重绑定的是 App 及其加载的 framework 的 GOT 槽位；共享缓存里系统 framework 之间的
+  调用不经过可重绑定的 GOT，所以不会出现。`APTObjcMsgSendHookDiagnostics()` 会报告重绑定
+  了多少个槽位。
 - 部署目标为 iOS 14+ / macOS 11+ 时，clang 会把部分 `alloc`、`init`、`class`、`self`
   消息发送改成直接调用 `objc_alloc_init` / `objc_opt_*`，所以这些调用不会作为 hook
   事件出现。

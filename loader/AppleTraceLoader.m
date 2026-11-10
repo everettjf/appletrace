@@ -13,12 +13,39 @@
 //      <jbroot>/Library/Frameworks/appletrace.framework/appletrace
 //  is dlopen'ed. Processes without a config file are left untouched.
 //
+//  For apps that have a config file, a short status log is written to the
+//  app's own tmp/AppleTraceLoader.log (always writable from the sandbox) so
+//  `appletrace jb pull` can show why an app was or wasn't traced.
+//
 
 #import <Foundation/Foundation.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <limits.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+
+static void AppleTraceLoaderLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+
+static void AppleTraceLoaderLog(NSString *format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:arguments];
+    va_end(arguments);
+    NSLog(@"AppleTraceLoader: %@", message);
+
+    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:@"AppleTraceLoader.log"];
+    NSString *line = [NSString stringWithFormat:@"%@ [%d] %@\n", [NSDate date], getpid(), message];
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!handle) {
+        [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:nil];
+        handle = [NSFileHandle fileHandleForWritingAtPath:path];
+    }
+    [handle seekToEndOfFile];
+    [handle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+    [handle closeFile];
+}
 
 static NSString *AppleTraceJailbreakRoot(void) {
     Dl_info info;
@@ -62,8 +89,12 @@ __attribute__((constructor)) static void AppleTraceLoaderInit(void) {
             [NSString stringWithFormat:@"var/mobile/Library/AppleTrace/%@.plist", bundleID]];
         NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:configPath];
         if (![config isKindOfClass:[NSDictionary class]]) {
+            if (access(configPath.fileSystemRepresentation, F_OK) == 0) {
+                AppleTraceLoaderLog(@"config %@ exists but could not be read (errno %d)", configPath, errno);
+            }
             return;
         }
+        AppleTraceLoaderLog(@"%@: jbroot %@, config %@", bundleID, jbroot, configPath);
 
         for (id key in config) {
             id value = config[key];
@@ -82,9 +113,13 @@ __attribute__((constructor)) static void AppleTraceLoaderInit(void) {
             @"Library/Frameworks/appletrace.framework/appletrace"];
         void *handle = dlopen(framework.fileSystemRepresentation, RTLD_NOW);
         if (!handle) {
-            NSLog(@"AppleTraceLoader: failed to load %@: %s", framework, dlerror());
+            AppleTraceLoaderLog(@"failed to load %@: %s", framework, dlerror());
             return;
         }
-        NSLog(@"AppleTraceLoader: loaded AppleTrace into %@ (config %@)", bundleID, configPath);
+        const char *(*hookDiagnostics)(void) = (const char *(*)(void))dlsym(handle, "APTObjcMsgSendHookDiagnostics");
+        const char *(*traceDirectory)(void) = (const char *(*)(void))dlsym(handle, "APTGetTraceDirectory");
+        AppleTraceLoaderLog(@"loaded %@; objc_msgSend hook: %s; traces in %s", framework,
+                            hookDiagnostics ? hookDiagnostics() : "?",
+                            traceDirectory ? traceDirectory() : "?");
     }
 }

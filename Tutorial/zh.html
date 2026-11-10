@@ -288,7 +288,9 @@ swift run appletrace open  mytrace                                    # → Perf
                 </li>
             </ol>
             <p>也可以分步：<code>jb enable &lt;bundle-id&gt; --hook</code>，操作 App，<code>jb pull &lt;bundle-id&gt;</code>，<code>open appletracedata-&lt;bundle-id&gt;</code>，最后 <code>jb disable &lt;bundle-id&gt;</code>。<code>enable</code> 会写入 <code>&lt;jbroot&gt;/var/mobile/Library/AppleTrace/&lt;bundle-id&gt;.plist</code>；loader 只处理有该文件的 App。</p>
-            <div class="callout tip"><span class="ic">💡</span><p>SSH 需要密钥登录（<code>ssh-copy-id</code>）。通过 USB 时可用 <code>iproxy 2222 22</code> 转发端口，再传 <code>--host 127.0.0.1 --port 2222</code>。</p></div>
+            <div class="callout tip"><span class="ic">💡</span><p>SSH 需要密钥登录（<code>ssh-copy-id</code>）。通过 USB 时可用 <code>iproxy 2222 22</code> 转发端口，再传 <code>--host 127.0.0.1 --port 2222</code>。只有 <code>jb install</code> 需要 root；如果只能以 <code>mobile</code> 登录，请用 Sileo/Zebra 安装 <code>.deb</code>，其余命令加 <code>--user mobile</code>。</p></div>
+            <p>loader 会在 App 的 <code>tmp/AppleTraceLoader.log</code> 写一行状态（<code>jb pull</code> 会打印），包括 hook 重绑定了多少个 GOT 槽位。</p>
+            <div class="callout warn"><span class="ic">⚠️</span><p><strong>被封存的 App：</strong>iOS 26 上 Apple 自带 App 的只读 <code>__DATA_CONST</code> 被映射为永久不可写区域，hook 无法重绑定其 GOT（日志中 <code>main_executable_slots=0</code>）。这些 App 照常运行；第三方 App 不受影响。</p></div>
         </section>
 
         <section id="env">

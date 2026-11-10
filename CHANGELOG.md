@@ -33,7 +33,12 @@
   `installObjCMsgSendHook()`, `isObjCMsgSendHookInstalled`, and `StaticString`
   overloads that pass literals to the core without bridging.
 - `@TraceAll` also traces initializers.
-- C: `APTNewAsyncID()`, `APTSectionNameForMethod()`.
+- C: `APTNewAsyncID()`, `APTSectionNameForMethod()`,
+  `APTObjcMsgSendHookDiagnostics()` (images scanned, GOT slots rebound,
+  protection failures).
+- The loader writes `tmp/AppleTraceLoader.log` inside each traced app;
+  `appletrace jb pull` prints it. `APPLETRACE_SSH_OPTIONS` passes extra
+  ssh/scp options; every `jb` command except `install` works as `mobile`.
 - `APPLETRACE_FORMAT` and `APPLETRACE_FLUSH_INTERVAL_MS`.
 - The `objc_msgSend` hook ships in the SwiftPM `AppleTrace` product (previously
   declared but not linked).
@@ -60,12 +65,22 @@
   (iOS 12 deployment target).
 - `merge.py` raised on a record truncated by a killed process.
 
+### Known limitations
+
+- On iOS 26, Apple's own apps seal their read-only `__DATA_CONST`, so the hook
+  cannot rebind their GOT; the loader detects this, leaves the app running, and
+  reports it in `AppleTraceLoader.log`.
+
 ### Verified
 
 - Swift tests (25), host stress test (13 configurations), host hook test,
   Simulator hook tests, and on-device runs on an iPhone 11 (iOS 26.0.1, arm64
   and arm64e) including the Swift demo recorded with `appletrace record` and
   loaded into Perfetto with `appletrace open`.
+- Roothide jailbreak on the same iPhone 11: loader installed through Sileo;
+  `appletrace jb record` on a Flutter App Store app (22,849 hooked sends, 10
+  threads, all paired), with `--allow` filtering and `--text`; Notes and
+  Calculator load the framework and keep running with their sealed GOT reported.
 
 ## 1.1 and earlier
 

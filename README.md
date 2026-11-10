@@ -405,6 +405,11 @@ the jailbreak root from its own path, so the same binaries work on both.
    appletrace jb install appletrace-loader_2.0.0_iphoneos-arm64e.deb --host <device> [--port 22]
    ```
 
+   `jb install` runs `dpkg` and needs root SSH. If you can only log in as
+   `mobile` (e.g. roothide, where `sudo` asks for a password), install the
+   `.deb` with Sileo / Zebra instead and pass `--user mobile` to every other
+   `jb` command — they don't need root.
+
 2. Record an app (it is relaunched with tracing enabled, then stopped, pulled and merged):
 
    ```bash
@@ -418,8 +423,21 @@ the jailbreak root from its own path, so the same binaries work on both.
 
 `enable` writes `<jbroot>/var/mobile/Library/AppleTrace/<bundle-id>.plist` (the
 `APPLETRACE_*` variables to apply). The loader only touches apps that have such a
-file. SSH needs key-based login (`ssh-copy-id`); over USB you can forward port 22
-with `iproxy 2222 22` and pass `--host 127.0.0.1 --port 2222`.
+file, and writes a short status line — jailbreak root, rebinding diagnostics,
+trace directory — to the app's `tmp/AppleTraceLoader.log`, which `jb pull`
+prints. SSH needs key-based login (`ssh-copy-id`); over USB you can forward port
+22 with `iproxy 2222 22` and pass `--host 127.0.0.1 --port 2222`. Extra ssh/scp
+options go in `APPLETRACE_SSH_OPTIONS` (e.g. `"-i ~/.ssh/device_key"`).
+
+**Verified** on a roothide jailbreak (iPhone 11, iOS 26.0.1): a Flutter App
+Store app recorded 22,849 hooked sends across 10 threads, class filters and the
+text format work, and injected arm64e system apps run normally.
+
+> **Limitation — sealed apps.** On iOS 26, Apple's own apps map their read-only
+> `__DATA_CONST` as a permanent, non-writable region, so their GOT can't be
+> rebound and the hook sees no sends from them (`AppleTraceLoader.log` shows
+> `main_executable_slots=0 main_protect=2`). Third-party apps are unaffected.
+> The loader leaves sealed apps running normally.
 
 ---
 
@@ -437,6 +455,10 @@ with `iproxy 2222 22` and pass `--host 127.0.0.1 --port 2222`.
   preserves integer, floating-point, stack-passed and aggregate-return ABI state;
   it is validated on the Simulator, on an arm64e iPhone 17 Pro (iOS 27), and on
   an iPhone 11 (iOS 26.0.1) in both arm64 and arm64e builds.
+- The hook rebinds GOT slots of the app and of frameworks it loads; calls
+  *between* system frameworks in the shared cache are not routed through a
+  rebindable GOT, so they don't appear. `APTObjcMsgSendHookDiagnostics()`
+  reports how many slots were rebound.
 - With a deployment target of iOS 14+ / macOS 11+, clang emits
   `objc_alloc_init` / `objc_opt_*` calls instead of some `alloc`, `init`,
   `class` and `self` message sends, so those don't appear as hooked events.

@@ -30,7 +30,9 @@ enum Jailbreak {
     SSH OPTIONS
       --host <host>     device address (default: $APPLETRACE_SSH_HOST)
       --port <port>     SSH port (default: $APPLETRACE_SSH_PORT or 22)
-      --user <user>     SSH user (default: root)
+      --user <user>     SSH user (default: $APPLETRACE_SSH_USER or root; `mobile` works for
+                        everything except `install`)
+      $APPLETRACE_SSH_OPTIONS  extra ssh/scp options, e.g. "-i ~/.ssh/device_key"
 
     Install the AppleTraceLoader package first (release asset
     appletrace-loader_<version>_iphoneos-arm64.deb for rootless,
@@ -44,8 +46,16 @@ enum Jailbreak {
         var user: String
 
         var destination: String { "\(user)@\(host)" }
+
+        /// Extra ssh/scp options from $APPLETRACE_SSH_OPTIONS, e.g.
+        /// "-o UserKnownHostsFile=/path/known_hosts -i ~/.ssh/device_key".
+        var extraOptions: [String] {
+            (ProcessInfo.processInfo.environment["APPLETRACE_SSH_OPTIONS"] ?? "")
+                .split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+        }
+
         var baseArguments: [String] {
-            ["-p", port, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", destination]
+            ["-p", port, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"] + extraOptions + [destination]
         }
 
         @discardableResult
@@ -58,7 +68,7 @@ enum Jailbreak {
         }
 
         func copy(_ local: URL, to remote: String) throws {
-            let result = try run("/usr/bin/scp", ["-P", port, "-o", "BatchMode=yes", local.path, "\(destination):\(remote)"], quiet: true)
+            let result = try run("/usr/bin/scp", ["-P", port, "-o", "BatchMode=yes"] + extraOptions + [local.path, "\(destination):\(remote)"], quiet: true)
             guard result.status == 0 else { throw CLIError("scp failed:\n\(result.output)") }
         }
     }
@@ -204,22 +214,37 @@ enum Jailbreak {
         process.standardError = errors
         try process.run()
         input.fileHandleForWriting.write(Data((jbrootPrelude + """
-        CONTAINER=""
+        # The metadata match is a substring match (com.example.App also matches
+        # com.example.App.widget), so among matching containers take the one
+        # that holds a trace, newest first.
+        MATCHES=""
         for dir in /var/mobile/Containers/Data/Application/*; do
           if grep -q "\(bundleID)" "$dir/.com.apple.mobile_container_manager.metadata.plist" 2>/dev/null; then
-            CONTAINER="$dir"; break
+            MATCHES="$MATCHES $dir"
           fi
         done
-        [ -n "$CONTAINER" ] || { echo "no data container for \(bundleID)" >&2; exit 4; }
-        [ -d "$CONTAINER/Library/appletracedata" ] || { echo "no trace yet in $CONTAINER/Library/appletracedata" >&2; exit 5; }
-        cd "$CONTAINER/Library/appletracedata" && tar -cf - .
+        [ -n "$MATCHES" ] || { echo "no data container for \(bundleID)" >&2; exit 4; }
+        TRACE=""
+        for dir in $(ls -dt $(for d in $MATCHES; do echo "$d/Library/appletracedata"; done) 2>/dev/null); do
+          TRACE="$dir"; break
+        done
+        if [ -z "$TRACE" ]; then
+          echo "no trace yet for \(bundleID)." >&2
+          for d in $MATCHES; do [ -f "$d/tmp/AppleTraceLoader.log" ] && tail -n 3 "$d/tmp/AppleTraceLoader.log" >&2; done
+          exit 5
+        fi
+        tail -n 1 "$(dirname "$(dirname "$TRACE")")/tmp/AppleTraceLoader.log" 2>/dev/null | sed 's/^/loader: /' >&2
+        cd "$TRACE" && tar -cf - .
 
         """).utf8))
         input.fileHandleForWriting.closeFile()
         process.waitUntilExit()
+        let diagnostics = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         guard process.terminationStatus == 0 else {
-            let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            throw CLIError("pull failed: \(message)")
+            throw CLIError("pull failed: \(diagnostics)")
+        }
+        if !diagnostics.isEmpty {
+            FileHandle.standardError.write(Data(diagnostics.utf8))
         }
         let untar = try run("/usr/bin/tar", ["-xf", archive.path, "-C", directory.path], quiet: true)
         guard untar.status == 0 else { throw CLIError("tar failed: \(untar.output)") }

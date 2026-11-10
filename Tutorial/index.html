@@ -312,7 +312,9 @@ swift run appletrace open  mytrace                                    # → Perf
                 </li>
             </ol>
             <p>Step by step: <code>jb enable &lt;bundle-id&gt; --hook</code>, use the app, <code>jb pull &lt;bundle-id&gt;</code>, <code>open appletracedata-&lt;bundle-id&gt;</code>, and <code>jb disable &lt;bundle-id&gt;</code>. <code>enable</code> writes <code>&lt;jbroot&gt;/var/mobile/Library/AppleTrace/&lt;bundle-id&gt;.plist</code>; the loader only touches apps that have one.</p>
-            <div class="callout tip"><span class="ic">💡</span><p>SSH needs key-based login (<code>ssh-copy-id</code>). Over USB, forward the port with <code>iproxy 2222 22</code> and pass <code>--host 127.0.0.1 --port 2222</code>.</p></div>
+            <div class="callout tip"><span class="ic">💡</span><p>SSH needs key-based login (<code>ssh-copy-id</code>). Over USB, forward the port with <code>iproxy 2222 22</code> and pass <code>--host 127.0.0.1 --port 2222</code>. Only <code>jb install</code> needs root; if you can only log in as <code>mobile</code>, install the <code>.deb</code> with Sileo/Zebra and pass <code>--user mobile</code>.</p></div>
+            <p>The loader writes a status line to the app's <code>tmp/AppleTraceLoader.log</code> (shown by <code>jb pull</code>), including how many GOT slots the hook rebound.</p>
+            <div class="callout warn"><span class="ic">⚠️</span><p><strong>Sealed apps:</strong> on iOS 26, Apple's own apps map their read-only <code>__DATA_CONST</code> as a permanent non-writable region, so the hook can't rebind their GOT (<code>main_executable_slots=0</code> in the log). They keep running normally; third-party apps are unaffected.</p></div>
         </section>
 
         <!-- ENV -->

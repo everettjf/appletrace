@@ -50,6 +50,10 @@ BOOL APTInstallObjcMsgSendHook(void) {
 BOOL APTIsObjcMsgSendHookInstalled(void) {
     return NO;
 }
+
+const char *APTObjcMsgSendHookDiagnostics(void) {
+    return "unsupported architecture";
+}
 #else
 
 typedef void (*APTObjcMsgSendFunction)(void);
@@ -121,6 +125,14 @@ static APTObjcMsgSendFunction apt_original_objc_msgSend = NULL;
 static APTObjcMsgSendSuper2Function apt_original_objc_msgSendSuper2 = NULL;
 static struct APTRebindingsEntry *gRebindingsHead = NULL;
 static BOOL gHookInstalled = NO;
+// Rebinding diagnostics, reported by APTObjcMsgSendHookDiagnostics().
+static unsigned gDiagImages = 0;
+static unsigned gDiagSlots = 0;
+static unsigned gDiagProtectFailures = 0;
+static unsigned gDiagMainSlots = 0;
+static int gDiagMainProtectStatus = 0;
+static char gDiagFirstFailure[160];
+static os_unfair_lock gDiagLock = OS_UNFAIR_LOCK_INIT;
 
 __attribute__((used)) static void apt_before_objc_msgSend(id object, SEL selector);
 __attribute__((used)) static void apt_before_objc_msgSendSuper2(struct objc_super *super_info, SEL selector);
@@ -639,13 +651,15 @@ static int apt_prepend_rebindings(struct APTRebindingsEntry **head,
     return 0;
 }
 
-static void apt_perform_rebinding_with_section(struct APTRebindingsEntry *rebindings,
-                                               section_t *section,
-                                               intptr_t slide,
-                                               nlist_t *symtab,
-                                               char *strtab,
-                                               uint32_t *indirect_symtab,
-                                               BOOL image_uses_chained_fixups) {
+static unsigned apt_perform_rebinding_with_section(struct APTRebindingsEntry *rebindings,
+                                                   section_t *section,
+                                                   intptr_t slide,
+                                                   nlist_t *symtab,
+                                                   char *strtab,
+                                                   uint32_t *indirect_symtab,
+                                                   BOOL image_uses_chained_fixups,
+                                                   kern_return_t *protect_status) {
+    unsigned rebound = 0;
     uint32_t *indirect_symbol_indices = indirect_symtab + section->reserved1;
     void **indirect_symbol_bindings = (void **)((uintptr_t)slide + section->addr);
     size_t entry_count = section->size / sizeof(void *);
@@ -654,19 +668,16 @@ static void apt_perform_rebinding_with_section(struct APTRebindingsEntry *rebind
     BOOL is_authenticated_got =
         strncmp(section->sectname, "__auth_got", sizeof(section->sectname)) == 0;
     if (is_authenticated_got && !image_uses_chained_fixups) {
-        return;
+        return 0;
     }
 #endif
 
-    kern_return_t protection_status = vm_protect(mach_task_self(),
-                                                 (vm_address_t)indirect_symbol_bindings,
-                                                 (vm_size_t)section->size,
-                                                 0,
-                                                 VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
-    if (protection_status != KERN_SUCCESS) {
-        return;
+    // Pass 1: decide the replacement for each slot. Nothing is written yet.
+    void **replacements = calloc(entry_count, sizeof(void *));
+    if (!replacements) {
+        return 0;
     }
-
+    unsigned planned = 0;
     for (size_t index = 0; index < entry_count; index++) {
         uint32_t symtab_index = indirect_symbol_indices[index];
         if (symtab_index == INDIRECT_SYMBOL_ABS ||
@@ -691,6 +702,8 @@ static void apt_perform_rebinding_with_section(struct APTRebindingsEntry *rebind
                     void *replacement = rebinding->replacement;
 #if __has_feature(ptrauth_calls)
                     if (is_authenticated_got) {
+                        // Signed for the slot's own (original) address: callers
+                        // authenticate with that address as the discriminator.
                         void *slot = &indirect_symbol_bindings[index];
                         void *raw_replacement = ptrauth_strip(replacement, ptrauth_key_function_pointer);
                         uintptr_t discriminator = ptrauth_blend_discriminator(slot, 0);
@@ -699,7 +712,8 @@ static void apt_perform_rebinding_with_section(struct APTRebindingsEntry *rebind
                                                                   discriminator);
                     }
 #endif
-                    indirect_symbol_bindings[index] = replacement;
+                    replacements[index] = replacement;
+                    planned += 1;
                     goto next_symbol;
                 }
             }
@@ -710,9 +724,37 @@ static void apt_perform_rebinding_with_section(struct APTRebindingsEntry *rebind
         continue;
     }
 
-    // Keep the rebinding page writable after patching. Restoring it to a guessed
-    // read-only protection can corrupt unrelated mutable globals that share the
-    // same __DATA page, which caused simulator startup crashes.
+    if (planned == 0) {
+        free(replacements);
+        return 0;
+    }
+
+    // Pass 2: write. Most images allow making the GOT writable in place.
+    kern_return_t protection_status = vm_protect(mach_task_self(),
+                                                 (vm_address_t)indirect_symbol_bindings,
+                                                 (vm_size_t)section->size,
+                                                 0,
+                                                 VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+    if (protection_status == KERN_SUCCESS) {
+        for (size_t index = 0; index < entry_count; index++) {
+            if (replacements[index]) {
+                indirect_symbol_bindings[index] = replacements[index];
+                rebound += 1;
+            }
+        }
+    } else if (protect_status) {
+        // The GOT is sealed: e.g. Apple-signed apps on iOS 26 map their
+        // SG_READ_ONLY __DATA_CONST as a permanent read-only entry. Remapping
+        // over it is not an option (XNU turns a permanent entry inaccessible
+        // instead of replacing it), so the image is skipped and reported by
+        // APTObjcMsgSendHookDiagnostics().
+        *protect_status = protection_status;
+    }
+    free(replacements);
+    // Note: after an in-place write the page stays writable. Restoring it to a
+    // guessed read-only protection can corrupt unrelated mutable globals that
+    // share the same __DATA page, which caused simulator startup crashes.
+    return rebound;
 }
 
 static void apt_rebind_symbols_for_image(const struct mach_header *header,
@@ -722,7 +764,8 @@ static void apt_rebind_symbols_for_image(const struct mach_header *header,
     if (!header || !rebindings || !dladdr(header, &info)) {
         return;
     }
-    if (info.dli_fname && strstr(info.dli_fname, "/appletrace.framework/") != NULL) {
+    if (info.dli_fname && (strstr(info.dli_fname, "/appletrace.framework/") != NULL ||
+                           strstr(info.dli_fname, "/AppleTraceLoader.dylib") != NULL)) {
         return;
     }
 
@@ -761,6 +804,8 @@ static void apt_rebind_symbols_for_image(const struct mach_header *header,
     char *strtab = (char *)(linkedit_base + symtab_command->stroff);
     uint32_t *indirect_symtab = (uint32_t *)(linkedit_base + dysymtab_command->indirectsymoff);
 
+    unsigned image_slots = 0;
+    kern_return_t protect_status = KERN_SUCCESS;
     command_cursor = (uintptr_t)header + sizeof(mach_header_t);
     for (uint32_t index = 0; index < header->ncmds; index++) {
         struct load_command *command = (struct load_command *)command_cursor;
@@ -768,25 +813,45 @@ static void apt_rebind_symbols_for_image(const struct mach_header *header,
             segment_command_t *segment = (segment_command_t *)command;
             BOOL is_data_segment =
                 strcmp(segment->segname, SEG_DATA) == 0 ||
-                strcmp(segment->segname, "__DATA_CONST") == 0;
+                strcmp(segment->segname, "__DATA_CONST") == 0 ||
+                strcmp(segment->segname, "__AUTH_CONST") == 0 ||
+                strcmp(segment->segname, "__AUTH") == 0;
             if (is_data_segment) {
                 for (uint32_t section_index = 0; section_index < segment->nsects; section_index++) {
                     section_t *section = (section_t *)((uintptr_t)segment + sizeof(segment_command_t)) + section_index;
                     uint32_t type = section->flags & SECTION_TYPE;
                     if (type == S_LAZY_SYMBOL_POINTERS || type == S_NON_LAZY_SYMBOL_POINTERS) {
-                        apt_perform_rebinding_with_section(rebindings,
-                                                           section,
-                                                           slide,
-                                                           symtab,
-                                                           strtab,
-                                                           indirect_symtab,
-                                                           image_uses_chained_fixups);
+                        image_slots += apt_perform_rebinding_with_section(rebindings,
+                                                                          section,
+                                                                          slide,
+                                                                          symtab,
+                                                                          strtab,
+                                                                          indirect_symtab,
+                                                                          image_uses_chained_fixups,
+                                                                          &protect_status);
                     }
                 }
             }
         }
         command_cursor += command->cmdsize;
     }
+
+    os_unfair_lock_lock(&gDiagLock);
+    gDiagImages += 1;
+    gDiagSlots += image_slots;
+    if (header->filetype == MH_EXECUTE) {
+        gDiagMainSlots += image_slots;
+        gDiagMainProtectStatus = protect_status;
+    }
+    if (protect_status != KERN_SUCCESS) {
+        gDiagProtectFailures += 1;
+        if (gDiagFirstFailure[0] == '\0') {
+            const char *name = info.dli_fname ? strrchr(info.dli_fname, '/') : NULL;
+            snprintf(gDiagFirstFailure, sizeof(gDiagFirstFailure), "%s (kr=%d)",
+                     name ? name + 1 : "?", protect_status);
+        }
+    }
+    os_unfair_lock_unlock(&gDiagLock);
 }
 
 static void apt_rebind_symbols_for_added_image(const struct mach_header *header, intptr_t slide) {
@@ -825,6 +890,17 @@ BOOL APTInstallObjcMsgSendHook(void) {
 
 BOOL APTIsObjcMsgSendHookInstalled(void) {
     return gHookInstalled;
+}
+
+const char *APTObjcMsgSendHookDiagnostics(void) {
+    static char buffer[320];
+    os_unfair_lock_lock(&gDiagLock);
+    snprintf(buffer, sizeof(buffer),
+             "installed=%d images=%u slots=%u main_executable_slots=%u main_protect=%d protect_failures=%u%s%s",
+             gHookInstalled, gDiagImages, gDiagSlots, gDiagMainSlots, gDiagMainProtectStatus,
+             gDiagProtectFailures, gDiagFirstFailure[0] ? " first_failure=" : "", gDiagFirstFailure);
+    os_unfair_lock_unlock(&gDiagLock);
+    return buffer;
 }
 
 #endif  // defined(__arm64__)

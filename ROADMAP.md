@@ -63,6 +63,9 @@ and in third-party apps on jailbroken devices.
 - `os_signpost` backend: the same API, viewable in Instruments.
 - Hook `objc_alloc_init` / `objc_opt_class` / `objc_opt_self` so
   compiler-lowered sends appear in automatic traces.
+- Jailbreak loader: optional inline hook of `objc_msgSend` through ElleKit's
+  `MSHookFunction`, to cover apps whose `__DATA_CONST` is sealed (Apple's apps
+  on iOS 26) and sends between system frameworks, which GOT rebinding can't reach.
 - Experimental: convert Instruments `xctrace export` (incl. Processor Trace)
   into Perfetto traces.
 

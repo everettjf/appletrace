@@ -81,7 +81,6 @@ package() {
   local root="${stage}/data${prefix}"
   mkdir -p "${root}/Library/MobileSubstrate/DynamicLibraries" \
            "${root}/Library/Frameworks/appletrace.framework/Headers" \
-           "${root}/var/mobile/Library/AppleTrace" \
            "${stage}/control"
 
   cp "${WORK_DIR}/AppleTraceLoader" "${root}/Library/MobileSubstrate/DynamicLibraries/AppleTraceLoader.dylib"
@@ -89,7 +88,9 @@ package() {
   cp "${WORK_DIR}/appletrace" "${root}/Library/Frameworks/appletrace.framework/appletrace"
   cp "${SRC_DIR}/appletrace.h" "${root}/Library/Frameworks/appletrace.framework/Headers/appletrace.h"
   sed "s/@VERSION@/${VERSION}/" "${ROOT_DIR}/loader/Info.plist" > "${root}/Library/Frameworks/appletrace.framework/Info.plist"
-  chmod 755 "${root}/var/mobile/Library/AppleTrace"
+  # The per-app config directory (<jbroot>/var/mobile/Library/AppleTrace) is
+  # created by `appletrace jb enable` as the SSH user, so the package never
+  # touches the ownership of the user's /var/mobile directories.
 
   sed -e "s/@VERSION@/${VERSION}/" -e "s/@ARCH@/${arch}/" \
     "${ROOT_DIR}/loader/control" > "${stage}/control/control"

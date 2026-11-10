@@ -22,6 +22,9 @@ FOUNDATION_EXPORT const char *APTGetTraceDirectory(void);
 /// architectures other than arm64 / arm64e, where the hook is unavailable.
 FOUNDATION_EXPORT BOOL APTInstallObjcMsgSendHook(void);
 FOUNDATION_EXPORT BOOL APTIsObjcMsgSendHookInstalled(void);
+/// One-line summary of the hook's rebinding (images scanned, GOT slots
+/// rebound, protection failures) for troubleshooting.
+FOUNDATION_EXPORT const char *APTObjcMsgSendHookDiagnostics(void);
 
 #ifdef __OBJC__
 /// Interned "[ClassName selector]" for the current method. The string is
