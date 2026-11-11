@@ -9,60 +9,150 @@
 //  the begin/end calls are emitted into the function body at compile time, so
 //  they work for final classes, structs, and protocol methods alike.
 //
+//  Names passed as string literals bind to the `StaticString` overloads, which
+//  hand the literal's storage straight to the C core (no bridging, no
+//  allocation). Dynamic `String` names still work through the `String`
+//  overloads.
+//
 
 import CAppleTrace
 
 // MARK: - Manual API
 
-/// Begins a trace section. Pair with ``endSection(_:)`` on the same thread.
-/// Prefer ``withSpan(_:_:)`` or the ``Traced()`` macro, which can't leak a
-/// missing end.
+@usableFromInline
+@inline(__always)
+func cString(_ name: StaticString) -> UnsafePointer<CChar> {
+    // String-literal StaticStrings are always pointer-backed and NUL-terminated.
+    UnsafeRawPointer(name.utf8Start).assumingMemoryBound(to: CChar.self)
+}
+
+/// Begins a trace section. Pair with ``endSection(_:)-(StaticString)`` on the
+/// same thread. Prefer ``withSpan(_:_:)-(StaticString,_)`` or the ``Traced()``
+/// macro, which can't leak a missing end.
 @inlinable
+public func beginSection(_ name: StaticString) {
+    APTBeginSection(cString(name))
+}
+
+/// Begins a trace section with a dynamically built name.
+@inlinable
+@_disfavoredOverload
 public func beginSection(_ name: String) {
     APTBeginSection(name)
 }
 
-/// Ends a trace section previously opened with ``beginSection(_:)``.
+/// Ends a trace section previously opened with `beginSection`.
 @inlinable
+public func endSection(_ name: StaticString) {
+    APTEndSection(cString(name))
+}
+
+/// Ends a trace section with a dynamically built name.
+@inlinable
+@_disfavoredOverload
 public func endSection(_ name: String) {
     APTEndSection(name)
 }
 
 /// Runs `body` inside a trace section named `name`, closing the section even if
-/// `body` throws or returns early.
+/// `body` throws or returns early. For `async` work use
+/// ``withAsyncSpan(_:_:)-(StaticString,_)``: a section must begin and end on the
+/// same thread, and an `await` may resume on another one.
 @inlinable
+public func withSpan<T>(_ name: StaticString, _ body: () throws -> T) rethrows -> T {
+    APTBeginSection(cString(name))
+    defer { APTEndSection(cString(name)) }
+    return try body()
+}
+
+/// ``withSpan(_:_:)-(StaticString,_)`` for a dynamically built name.
+@inlinable
+@_disfavoredOverload
 public func withSpan<T>(_ name: String, _ body: () throws -> T) rethrows -> T {
     APTBeginSection(name)
     defer { APTEndSection(name) }
     return try body()
 }
 
+/// Runs async `body` inside an async span, which Perfetto draws on its own
+/// track and which may begin and end on different threads.
+@inlinable
+public func withAsyncSpan<T>(_ name: StaticString, _ body: () async throws -> T) async rethrows -> T {
+    let id = APTNewAsyncID()
+    APTAsyncBegin(cString(name), id)
+    defer { APTAsyncEnd(cString(name), id) }
+    return try await body()
+}
+
+/// ``withAsyncSpan(_:_:)-(StaticString,_)`` for a dynamically built name.
+@inlinable
+@_disfavoredOverload
+public func withAsyncSpan<T>(_ name: String, _ body: () async throws -> T) async rethrows -> T {
+    let id = APTNewAsyncID()
+    APTAsyncBegin(name, id)
+    defer { APTAsyncEnd(name, id) }
+    return try await body()
+}
+
 /// Emits an instantaneous marker at the current time.
 @inlinable
+public func traceInstant(_ name: StaticString) {
+    APTInstant(cString(name))
+}
+
+@inlinable
+@_disfavoredOverload
 public func traceInstant(_ name: String) {
     APTInstant(name)
 }
 
 /// Emits a counter sample that Perfetto renders as a graph track.
 @inlinable
+public func traceCounter(_ name: StaticString, _ value: Double) {
+    APTCounter(cString(name), value)
+}
+
+@inlinable
+@_disfavoredOverload
 public func traceCounter(_ name: String, _ value: Double) {
     APTCounter(name, value)
 }
 
+/// Returns a process-unique id for ``asyncBegin(_:id:)-(StaticString,_)`` /
+/// ``asyncEnd(_:id:)-(StaticString,_)`` pairs.
+@inlinable
+public func newAsyncID() -> UInt64 {
+    APTNewAsyncID()
+}
+
 /// Begins an async span identified by `(name, id)`; it may end on another thread.
 @inlinable
+public func asyncBegin(_ name: StaticString, id: UInt64) {
+    APTAsyncBegin(cString(name), id)
+}
+
+@inlinable
+@_disfavoredOverload
 public func asyncBegin(_ name: String, id: UInt64) {
     APTAsyncBegin(name, id)
 }
 
 /// Ends the async span identified by `(name, id)`.
 @inlinable
+public func asyncEnd(_ name: StaticString, id: UInt64) {
+    APTAsyncEnd(cString(name), id)
+}
+
+@inlinable
+@_disfavoredOverload
 public func asyncEnd(_ name: String, id: UInt64) {
     APTAsyncEnd(name, id)
 }
 
-/// Flushes buffered events to disk. Call before reading the trace off-device
-/// (the writer batches per thread).
+/// Flushes buffered events to disk. The runtime also drains in the
+/// background (every second by default, see `APPLETRACE_FLUSH_INTERVAL_MS`),
+/// when the app enters the background, and at exit; call this before reading
+/// the trace in-process.
 @inlinable
 public func flush() {
     APTFlush()
@@ -86,21 +176,78 @@ public var traceDirectory: String {
     String(cString: APTGetTraceDirectory())
 }
 
+/// Installs the automatic `objc_msgSend` hook (arm64 / arm64e only), tracing
+/// every Objective-C message send. Returns `false` where the hook is
+/// unavailable. Equivalent to launching with
+/// `APPLETRACE_AUTO_HOOK_OBJC_MSGSEND=1`.
+@discardableResult
+@inlinable
+public func installObjCMsgSendHook() -> Bool {
+    APTInstallObjcMsgSendHook()
+}
+
+/// Whether the `objc_msgSend` hook is installed.
+@inlinable
+public var isObjCMsgSendHookInstalled: Bool {
+    APTIsObjcMsgSendHookInstalled()
+}
+
+// MARK: - Macro support (not public API)
+
+/// Called by ``Traced()``-generated code for synchronous functions.
+@inlinable
+public func _tracedBegin(_ name: StaticString) {
+    APTBeginSection(cString(name))
+}
+
+/// Called by ``Traced()``-generated code for synchronous functions.
+@inlinable
+public func _tracedEnd(_ name: StaticString) {
+    APTEndSection(cString(name))
+}
+
+/// Called by ``Traced()``-generated code for `async` functions.
+@inlinable
+public func _tracedAsyncBegin(_ name: StaticString) -> UInt64 {
+    let id = APTNewAsyncID()
+    APTAsyncBegin(cString(name), id)
+    return id
+}
+
+/// Called by ``Traced()``-generated code for `async` functions.
+@inlinable
+public func _tracedAsyncEnd(_ name: StaticString, _ id: UInt64) {
+    APTAsyncEnd(cString(name), id)
+}
+
 // MARK: - Macros
 
-/// Wraps the annotated function's body in a trace section named after the
-/// function (`#function`, including argument labels). Works regardless of how
-/// the method is dispatched.
+/// Wraps the annotated function's body in a trace span named after the
+/// function, qualified by its enclosing type (for example
+/// `FeedViewModel.reload(force:)`). Works regardless of how the method is
+/// dispatched.
+///
+/// Synchronous functions get a section (`B`/`E`). `async` functions get an
+/// async span (`b`/`e`) instead, because an `await` may resume on a different
+/// thread and a section must begin and end on the same one.
 ///
 /// ```swift
 /// @Traced
 /// func loadConfig() { /* ... */ }
+///
+/// @Traced("feed.refresh")
+/// func refresh() async throws { /* ... */ }
 /// ```
 @attached(body)
 public macro Traced() = #externalMacro(module: "AppleTraceMacrosPlugin", type: "TracedMacro")
 
-/// Applies ``Traced()`` to every method with a body declared directly in the
-/// annotated type or extension.
+/// ``Traced()`` with an explicit span name.
+@attached(body)
+public macro Traced(_ name: StaticString) = #externalMacro(module: "AppleTraceMacrosPlugin", type: "TracedMacro")
+
+/// Applies ``Traced()`` to every method and initializer with a body declared
+/// directly in the annotated type or extension. Members already marked
+/// `@Traced` or `@NotTraced` are left alone.
 ///
 /// ```swift
 /// @TraceAll
@@ -108,3 +255,7 @@ public macro Traced() = #externalMacro(module: "AppleTraceMacrosPlugin", type: "
 /// ```
 @attached(memberAttribute)
 public macro TraceAll() = #externalMacro(module: "AppleTraceMacrosPlugin", type: "TraceAllMacro")
+
+/// Excludes a member from ``TraceAll()``. Expands to nothing.
+@attached(peer)
+public macro NotTraced() = #externalMacro(module: "AppleTraceMacrosPlugin", type: "NotTracedMacro")

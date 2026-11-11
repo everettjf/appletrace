@@ -45,8 +45,9 @@ def iter_events(trace_files: Iterable[Path]) -> Iterable[dict]:
 
 
 def _iter_text_events(file_path: Path, data: bytes) -> Iterable[dict]:
-    text = data.decode("utf-8")
-    for line_number, line in enumerate(text.splitlines(), start=1):
+    text = data.decode("utf-8", errors="replace")
+    lines = text.split("\n")
+    for line_number, line in enumerate(lines, start=1):
         raw_line = line.strip()
         if not raw_line:
             continue
@@ -57,6 +58,12 @@ def _iter_text_events(file_path: Path, data: bytes) -> Iterable[dict]:
         try:
             event = json.loads(raw_line)
         except json.JSONDecodeError as exc:
+            # A record cut off mid-write by a killed process has no trailing
+            # newline (only mmap zero padding); tolerate that, reject a
+            # complete line that is corrupt.
+            unterminated = line_number == len(lines)
+            if "\x00" in raw_line or unterminated:
+                break
             raise ValueError(
                 f"Invalid JSON in {file_path}:{line_number}: {exc.msg}"
             ) from exc

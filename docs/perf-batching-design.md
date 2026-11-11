@@ -1,10 +1,18 @@
 # Design: Per-Thread Batched Trace Writing
 
 Status: implemented in `appletrace/appletrace/src/appletrace.mm` (Phase 2 of
-[ROADMAP.md](../ROADMAP.md)). **macOS build + correctness verified** (section 9
-steps 1–2): the simulator smoke tests and `scripts/test_batching_stress.sh`
-(text + binary, 200k cross-thread pairs, no loss/duplication) pass on an
-Apple-silicon host. Instruments profiling (step 3) remains pending.
+the original roadmap). **Verified** on Apple-silicon hosts and devices: the
+simulator smoke tests and `scripts/test_batching_stress.sh` pass. Since 2.0 the
+stress test covers 13 configurations (text and binary formats, a 1 ms
+background drain, exit-time draining, SIGKILL, rollover, malformed config, an
+unwritable directory, disabled tracing) with nested and dynamically named
+sections. Instruments profiling (step 3) remains pending.
+
+2.0 changes to the design below: batches are shipped to the writer queue while
+the thread buffer's lock is held (so a thread's batches can never be reordered
+by a racing flush), a background timer drains all buffers every
+`APPLETRACE_FLUSH_INTERVAL_MS` (default 1000), and the app's background/exit
+notifications drain and truncate fragments.
 This document is the design of record; section 9 is the verification plan.
 
 ## 1. Problem
@@ -240,7 +248,7 @@ this:
    and `scripts/test_objc_msgsend_hook_experimental.sh` — output must match
    today's.
 2. **[done]** Run `scripts/test_batching_stress.sh`: it builds `appletrace.mm` +
-   `tests/stress/stress_main.mm` for the host, emits N threads × M begin/end
+   `Tests/stress/stress_main.mm` for the host, emits N threads × M begin/end
    pairs (worker threads exit before the flush to exercise the drain path), and
    asserts the merged trace contains exactly N×M `stress` complete events — no
    loss, no duplication. Run it a few times; concurrency bugs are intermittent.

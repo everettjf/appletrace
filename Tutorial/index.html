@@ -36,6 +36,7 @@
         <h4>Workflow</h4>
         <a href="#visualize">Visualize in Perfetto</a>
         <a href="#demos">Demo Apps</a>
+        <a href="#jailbreak">Jailbroken Devices</a>
         <h4>Reference</h4>
         <a href="#env">Environment Variables</a>
         <a href="#platforms">Platform Support</a>
@@ -79,7 +80,7 @@
         <!-- INTRODUCTION -->
         <section id="introduction">
             <h2>Introduction</h2>
-            <p>AppleTrace instruments your app — by adding markers, annotating Swift functions, or hooking message sends — and writes a timeline of events into sandbox <em>trace fragments</em>. A small Python pipeline merges those fragments into a single <code>trace.json</code> that you open directly in Perfetto to explore the call timeline, durations, threads, and counters.</p>
+            <p>AppleTrace instruments your app — by adding markers, annotating Swift functions, or hooking message sends — and writes a timeline of events into sandbox <em>trace fragments</em>. The <code>appletrace</code> command-line tool pulls them off the device, merges them into a single <code>trace.json</code>, and opens it in Perfetto to explore the call timeline, durations, threads, and counters.</p>
             <p>There are three ways to produce events. Pick whichever fits — they all land in the same trace:</p>
             <div class="grid2">
                 <div class="card">
@@ -110,14 +111,13 @@
 cd AppleTrace
 open sample/AppleTraceSwiftDemo/AppleTraceSwiftDemo.xcodeproj</code></pre></div>
                 </li>
-                <li><strong>Run it</strong> on a Simulator (or device) and tap <strong>Generate Trace</strong>. The app runs a multi-threaded workload and prints the on-disk <em>trace directory</em>.</li>
-                <li><strong>Merge the fragments</strong> into a single trace on your Mac:
-                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code>python3 merge.py -d "&lt;trace directory shown in the app&gt;"
-# → writes trace.json next to the fragments</code></pre></div>
+                <li><strong>Run it once</strong> on a device (or the Simulator) so it is installed.</li>
+                <li><strong>Record it</strong> — launch, wait, stop, pull, merge and open Perfetto in one command:
+                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code>swift run appletrace record --bundle-id com.everettjf.AppleTraceSwiftDemo \
+  --env APPLETRACE_AUTORUN=1 --open</code></pre></div>
                 </li>
-                <li><strong>Open it in Perfetto.</strong> Go to <a href="https://ui.perfetto.dev" target="_blank" rel="noopener">ui.perfetto.dev</a> and drag in <code>trace.json</code>. That's it.</li>
             </ol>
-            <div class="callout tip"><span class="ic">💡</span><p>In a hurry? <code>sh go.sh "&lt;trace directory&gt;"</code> merges <em>and</em> opens Perfetto in one step.</p></div>
+            <div class="callout tip"><span class="ic">💡</span><p>On the Simulator, tap <strong>Generate Trace</strong> and run the <code>swift run appletrace open &lt;dir&gt;</code> command the app shows. The trace is handed to Perfetto in your browser — never uploaded.</p></div>
         </section>
 
         <!-- INSTALLATION -->
@@ -125,14 +125,14 @@ open sample/AppleTraceSwiftDemo/AppleTraceSwiftDemo.xcodeproj</code></pre></div>
             <h2>Installation</h2>
             <h3>Requirements</h3>
             <ul>
-                <li>Xcode, Python 3, and a browser (Perfetto runs at <a href="https://ui.perfetto.dev" target="_blank" rel="noopener">ui.perfetto.dev</a>).</li>
-                <li><code>ldid</code> only if you re-sign loader builds; <code>pytest</code> only for the test suite.</li>
+                <li>Xcode 16+ (Swift 6), macOS 12+, and a browser (Perfetto runs at <a href="https://ui.perfetto.dev" target="_blank" rel="noopener">ui.perfetto.dev</a>). Apps need iOS 15+ / macOS 12+.</li>
+                <li><code>ldid</code> and <code>xz</code> only to build the jailbreak packages; Python only for the legacy <code>merge.py</code>.</li>
             </ul>
 
             <h3>Swift Package (for Swift, and the cleanest path for new projects)</h3>
             <p>Add the package and depend on the <code>AppleTrace</code> product (and optionally <code>AppleTraceAuto</code>):</p>
             <div class="code"><div class="code-head"><span class="lang">swift — Package.swift</span><button class="copy">copy</button></div><pre><code>dependencies: [
-    .package(url: "https://github.com/everettjf/AppleTrace.git", branch: "master"),
+    .package(url: "https://github.com/everettjf/AppleTrace.git", from: "2.0.0"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [
@@ -143,7 +143,7 @@ targets: [
 ]</code></pre></div>
 
             <h3>Framework embedding (Objective-C / C / C++)</h3>
-            <p>Open <code>appletrace/appletrace.xcodeproj</code>, build the framework, and embed <code>appletrace.framework</code> into your target. See <code>sample/TraceAllMsgDemo</code> for a working setup.</p>
+            <p>Use <code>appletrace.xcframework</code> from the <a href="https://github.com/everettjf/appletrace/releases" target="_blank" rel="noopener">release</a>, or open <code>appletrace/appletrace.xcodeproj</code>, build the framework, and embed <code>appletrace.framework</code> into your target. See <code>sample/TraceAllMsgDemo</code> for a working setup.</p>
         </section>
 
         <!-- MANUAL -->
@@ -178,9 +178,10 @@ void process() {
 
 void safer() {
     APTScopeSection("decode");      // RAII: ends automatically at scope exit
+    APTScopeSection("inner");       // several per scope are fine
     // ... work ...
 }</code></pre></div>
-            <div class="callout warn"><span class="ic">⚠️</span><p>Events are buffered per thread and flushed on a size threshold, on <code>APTFlush()</code>, or at thread exit. <strong>Call <code>APTFlush()</code></strong> (e.g. when backgrounding) before pulling the trace, or short-lived runs may look empty.</p></div>
+            <div class="callout tip"><span class="ic">💡</span><p>Events are buffered per thread and drained to a memory-mapped file every second (<code>APPLETRACE_FLUSH_INTERVAL_MS</code>), when the app enters the background, at thread exit and at process exit — so even a killed app leaves a readable trace. Call <code>APTFlush()</code> only when you read the trace in-process.</p></div>
         </section>
 
         <!-- SWIFT -->
@@ -191,23 +192,30 @@ void safer() {
             <h3>Scoped spans &amp; macros</h3>
             <div class="code"><div class="code-head"><span class="lang">swift</span><button class="copy">copy</button></div><pre><code>import AppleTrace
 
-// Scoped span — closes even on throw / early return:
+// Scoped span — closes even on throw / early return. Literal names bind to a
+// StaticString overload and are passed to the C core without allocating.
 withSpan("loadFeed") { try? loadFeed() }
 
-// Annotate a function. The section is named after #function, so it works
-// for final classes, structs, and protocol methods alike — the begin/end
-// is inserted into the body at compile time, sidestepping dispatch entirely.
-@Traced
-func decodeImage() { /* ... */ }
+// Async work may resume on another thread, so use an async span:
+let feed = try await withAsyncSpan("fetchFeed") { try await api.feed() }
 
-// @TraceAll stamps @Traced onto every method with a body:
+// Annotate a function. The begin/end is inserted into the body at compile
+// time, so it works for final classes, structs, actors and protocol methods.
+@Traced
+func decodeImage() { /* span "decodeImage()" */ }
+
+// @TraceAll stamps @Traced onto every method and initializer with a body.
+// Names are qualified by type: "FeedViewModel.reload(force:)".
 @TraceAll
 final class FeedViewModel {
-    func reload() { /* traced */ }
-    func render() { /* traced */ }
+    func reload(force: Bool) { /* traced */ }
+    func refresh() async throws { /* async span — safe across await */ }
+    @NotTraced func hotPath() { /* excluded */ }
 }
 
-APTFlush()   // or AppleTrace.flush()</code></pre></div>
+@Traced("feed.decode")   // explicit name
+func decode() { /* ... */ }</code></pre></div>
+            <div class="callout"><span class="ic">✅</span><p><strong><code>async</code> functions get async spans.</strong> A section must begin and end on the same thread, but an <code>await</code> can resume elsewhere; <code>@Traced</code> therefore emits an async begin/end pair with a per-call id for <code>async</code> functions, drawn by Perfetto on its own track.</p></div>
 
             <h3>Zero-annotation auto-tracing</h3>
             <p>The optional <code>AppleTraceAuto</code> product bridges <a href="https://github.com/johnno1962/SwiftTrace" target="_blank" rel="noopener">SwiftTrace</a> to hook a class hierarchy without annotations:</p>
@@ -226,9 +234,13 @@ AppleTraceAuto.trace(aClass: FeedViewModel.self)   // entry/exit → AppleTrace
             <div class="code"><div class="code-head"><span class="lang">objective-c</span><button class="copy">copy</button></div><pre><code>// e.g. early in application:didFinishLaunchingWithOptions:
 if (APTInstallObjcMsgSendHook()) {
     NSLog(@"AppleTrace: objc_msgSend hook installed");
-}</code></pre></div>
+}
+// Swift: AppleTrace.installObjCMsgSendHook()
+// No code at all: launch with APPLETRACE_AUTO_HOOK_OBJC_MSGSEND=1
+//   (what `appletrace record --hook` does)</code></pre></div>
             <p>Every traced send becomes a <code>[Class]selector</code> begin/end pair. See <code>sample/TraceAllMsgDemo</code> for a full setup, including the validated handling of floating-point arguments, struct returns, and <code>super</code> dispatch.</p>
-            <div class="callout"><span class="ic">✅</span><p><strong>arm64e is supported.</strong> The backend re-signs chained-fixup <code>__auth_got</code> slots for PAC and is validated on an iPhone 17 Pro running iOS 27 in both text and binary trace modes.</p></div>
+            <div class="callout"><span class="ic">✅</span><p><strong>arm64e is supported.</strong> The backend re-signs chained-fixup <code>__auth_got</code> slots for PAC and is validated on an iPhone 17 Pro (iOS 27) and an iPhone 11 (iOS 26.0.1). Images loaded later with <code>dlopen</code> are rebound too.</p></div>
+            <div class="callout warn"><span class="ic">⚠️</span><p>With iOS 14+ / macOS 11+ deployment targets, clang turns some <code>alloc</code>, <code>init</code>, <code>class</code> and <code>self</code> sends into direct <code>objc_alloc_init</code> / <code>objc_opt_*</code> calls, so those don't show up as hooked events.</p></div>
         </section>
 
         <!-- EVENTS -->
@@ -243,7 +255,7 @@ APTCounter("resident_mb", 142.5);
 APTCounter("fps", 60);
 
 // Work that flows across threads / queues, matched by (name, id) → async arc
-uint64_t reqID = 42;
+uint64_t reqID = APTNewAsyncID();   // process-unique
 APTAsyncBegin("image_load", reqID);
 dispatch_async(queue, ^{
     APTAsyncEnd("image_load", reqID);
@@ -255,28 +267,23 @@ dispatch_async(queue, ^{
                 <tr><td>Counter</td><td><code>APTCounter</code></td><td>A graph track</td></tr>
                 <tr><td>Async</td><td><code>APTAsyncBegin</code> / <code>APTAsyncEnd</code></td><td>Arcs that can cross threads</td></tr>
             </table>
-            <p>The Swift wrappers mirror these: <code>traceInstant</code>, <code>traceCounter</code>, <code>asyncBegin</code>, <code>asyncEnd</code>.</p>
+            <p>The Swift wrappers mirror these: <code>traceInstant</code>, <code>traceCounter</code>, <code>newAsyncID</code>, <code>asyncBegin</code>, <code>asyncEnd</code>, <code>withAsyncSpan</code>.</p>
         </section>
 
         <!-- VISUALIZE -->
         <section id="visualize">
             <h2>Visualize in Perfetto</h2>
-            <h3>1 · Pull the trace fragments</h3>
-            <p>Fragments are written to <code>&lt;app sandbox&gt;/Library/appletracedata</code>.</p>
-            <ul>
-                <li><strong>Simulator:</strong> the folder is already on your Mac; the demo app prints the path.</li>
-                <li><strong>Device:</strong> Xcode ▸ <em>Window ▸ Devices and Simulators ▸ Download Container</em>, or <code>xcrun devicectl device copy from … --domain-type appDataContainer --source Library/appletracedata --destination ./trace</code>.</li>
-            </ul>
-            <h3>2 · Merge</h3>
-            <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code>python3 merge.py -d /path/to/appletracedata     # → trace.json
-# or the unified CLI:
-python3 scripts/appletrace_cli.py open /path/to/appletracedata
-# or merge AND open Perfetto:
-sh go.sh /path/to/appletracedata</code></pre></div>
-            <h3>3 · Explore</h3>
-            <p>Drag <code>trace.json</code> into <a href="https://ui.perfetto.dev" target="_blank" rel="noopener">ui.perfetto.dev</a>. Use <kbd>W</kbd>/<kbd>S</kbd> to zoom, <kbd>A</kbd>/<kbd>D</kbd> to pan, and the search box to jump to a slice.</p>
-            <h3>Binary fragments (optional, smaller &amp; faster)</h3>
-            <p>Set <code>APPLETRACE_BINARY=1</code> to write a compact binary fragment format instead of text. <code>merge.py</code> decodes both transparently — no workflow change.</p>
+            <p>Fragments are written to <code>&lt;app sandbox&gt;/Library/appletracedata</code>. The <code>appletrace</code> CLI does the rest:</p>
+            <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code># Everything in one go (development-signed app on a connected device):
+swift run appletrace record --bundle-id com.example.MyApp --duration 15 --hook --open
+
+# Or step by step:
+swift run appletrace pull  --bundle-id com.example.MyApp -o mytrace   # devicectl copy
+swift run appletrace merge mytrace                                    # → mytrace/trace.json
+swift run appletrace open  mytrace                                    # → Perfetto</code></pre></div>
+            <p><code>appletrace open</code> serves a small page on <code>127.0.0.1</code> that hands the trace to <a href="https://ui.perfetto.dev" target="_blank" rel="noopener">ui.perfetto.dev</a> in your browser with Perfetto's postMessage API — the file is never uploaded. You can also drag <code>trace.json</code> in yourself. Use <kbd>W</kbd>/<kbd>S</kbd> to zoom, <kbd>A</kbd>/<kbd>D</kbd> to pan, and the search box to jump to a slice.</p>
+            <h3>Binary and text fragments</h3>
+            <p>Fragments are binary by default (no string formatting on the hot path, about half the size). Set <code>APPLETRACE_FORMAT=text</code> for human-readable JSON lines. <code>appletrace merge</code> (and the legacy <code>merge.py</code>) decode both, including fragments left behind by a killed process.</p>
         </section>
 
         <!-- DEMOS -->
@@ -288,7 +295,26 @@ sh go.sh /path/to/appletracedata</code></pre></div>
                 <tr><td><code>sample/AppleTraceSwiftDemo</code></td><td>Swift</td><td><code>withSpan</code> + <code>@Traced</code>/<code>@TraceAll</code> macros, counters/async, and the <code>AppleTraceAuto</code> hook</td></tr>
                 <tr><td><code>sample/TraceAllMsgDemo</code></td><td>Objective-C</td><td>Manual <code>APTBeginSection</code> sections and the automatic <code>objc_msgSend</code> hook</td></tr>
             </table>
-            <p>Each guided app has a <strong>Generate Trace</strong> button, shows the trace directory, and prints the exact merge/Perfetto commands. The Swift demo consumes the local package, so open it from the repo so Xcode resolves the products automatically.</p>
+            <p>Each guided app has a <strong>Generate Trace</strong> button, shows the trace directory, and prints the exact <code>appletrace</code> commands. The Swift demo consumes the local package, so open it from the repo so Xcode resolves the products automatically.</p>
+        </section>
+
+        <!-- JAILBREAK -->
+        <section id="jailbreak">
+            <h2>Tracing Any App on a Jailbroken Device</h2>
+            <p>The AppleTraceLoader tweak injects AppleTrace into apps you choose on <strong>rootless</strong> (<code>/var/jb</code>, e.g. Dopamine) and <strong>roothide</strong> jailbreaks. It derives the jailbreak root from its own path, so the same binaries work on both.</p>
+            <ol class="steps">
+                <li><strong>Install the package</strong> from the release — <code>appletrace-loader_&lt;version&gt;_iphoneos-arm64.deb</code> for rootless, <code>…_iphoneos-arm64e.deb</code> for roothide:
+                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code>swift run appletrace jb install appletrace-loader_2.0.0_iphoneos-arm64e.deb --host &lt;device&gt;</code></pre></div>
+                </li>
+                <li><strong>Record an app</strong> — it is relaunched with tracing on, then stopped, pulled over SSH and merged:
+                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code>swift run appletrace jb record com.example.App --host &lt;device&gt; \
+  --duration 15 --hook --allow "EX,App" --open</code></pre></div>
+                </li>
+            </ol>
+            <p>Step by step: <code>jb enable &lt;bundle-id&gt; --hook</code>, use the app, <code>jb pull &lt;bundle-id&gt;</code>, <code>open appletracedata-&lt;bundle-id&gt;</code>, and <code>jb disable &lt;bundle-id&gt;</code>. <code>enable</code> writes <code>&lt;jbroot&gt;/var/mobile/Library/AppleTrace/&lt;bundle-id&gt;.plist</code>; the loader only touches apps that have one.</p>
+            <div class="callout tip"><span class="ic">💡</span><p>SSH needs key-based login (<code>ssh-copy-id</code>). Over USB, forward the port with <code>iproxy 2222 22</code> and pass <code>--host 127.0.0.1 --port 2222</code>. Only <code>jb install</code> needs root; if you can only log in as <code>mobile</code>, install the <code>.deb</code> with Sileo/Zebra and pass <code>--user mobile</code>.</p></div>
+            <p>The loader writes a status line to the app's <code>tmp/AppleTraceLoader.log</code> (shown by <code>jb pull</code>), including how many GOT slots the hook rebound.</p>
+            <div class="callout warn"><span class="ic">⚠️</span><p><strong>Sealed apps:</strong> on iOS 26, Apple's own apps map their read-only <code>__DATA_CONST</code> as a permanent non-writable region, so the hook can't rebind their GOT (<code>main_executable_slots=0</code> in the log). They keep running normally; third-party apps are unaffected.</p></div>
         </section>
 
         <!-- ENV -->
@@ -296,12 +322,16 @@ sh go.sh /path/to/appletracedata</code></pre></div>
             <h2>Environment Variables</h2>
             <table>
                 <tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
-                <tr><td><code>APPLETRACE_ENABLED</code></td><td><code>true</code></td><td>Master on/off switch for recording.</td></tr>
-                <tr><td><code>APPLETRACE_BINARY</code></td><td><code>false</code></td><td>Write compact binary fragments instead of text.</td></tr>
+                <tr><td><code>APPLETRACE_ENABLED</code></td><td><code>1</code></td><td>Master on/off switch for recording.</td></tr>
+                <tr><td><code>APPLETRACE_FORMAT</code></td><td><code>binary</code></td><td><code>binary</code> or <code>text</code> (JSON lines). <code>APPLETRACE_BINARY=0/1</code> still works.</td></tr>
+                <tr><td><code>APPLETRACE_FLUSH_INTERVAL_MS</code></td><td><code>1000</code></td><td>Background drain interval; <code>0</code> disables it.</td></tr>
+                <tr><td><code>APPLETRACE_AUTO_HOOK_OBJC_MSGSEND</code></td><td><code>0</code></td><td>Install the <code>objc_msgSend</code> hook at load.</td></tr>
+                <tr><td><code>APPLETRACE_TRACE_CLASS_ALLOW</code> / <code>_DENY</code></td><td>—</td><td>Comma-separated class-name prefixes to include / exclude.</td></tr>
                 <tr><td><code>APPLETRACE_DATA_DIR</code></td><td><em>sandbox</em></td><td>Override where fragments are written.</td></tr>
                 <tr><td><code>APPLETRACE_BLOCK_SIZE_MB</code></td><td><code>16</code></td><td>Per-fragment mmap block size (1–256 MB).</td></tr>
-                <tr><td><code>APPLETRACE_KEEP_EXISTING</code></td><td><code>false</code></td><td>Keep prior trace dirs instead of replacing them.</td></tr>
+                <tr><td><code>APPLETRACE_KEEP_EXISTING</code></td><td><code>0</code></td><td>Keep prior trace dirs instead of replacing them.</td></tr>
             </table>
+            <p>Malformed values are logged and ignored, so a typo never silently changes behavior.</p>
             <p>Runtime controls are also available in code: <code>APTSetEnabled(BOOL)</code>, <code>APTIsEnabled()</code>, <code>APTGetTraceDirectory()</code>, <code>APTFlush()</code>, <code>APTSyncWait()</code>.</p>
         </section>
 
@@ -314,6 +344,7 @@ sh go.sh /path/to/appletracedata</code></pre></div>
                 <tr><td>Swift macros (<code>@Traced</code>/<code>@TraceAll</code>/<code>withSpan</code>)</td><td>Simulator <strong>and device</strong></td></tr>
                 <tr><td><code>objc_msgSend</code> hook</td><td>arm64 and arm64e</td></tr>
                 <tr><td><code>AppleTraceAuto</code> (SwiftTrace)</td><td>Simulator / macOS only</td></tr>
+                <tr><td>Jailbreak loader</td><td>Rootless and roothide jailbreaks (arm64 / arm64e)</td></tr>
             </table>
             <h3>Why Swift needs source-level tracing</h3>
             <p>Swift avoids message dispatch for speed: <code>struct</code>/<code>final</code> methods and whole-module-optimized calls are <em>statically</em> dispatched; class methods use a <em>vtable</em>; protocol methods use a <em>witness table</em>. None go through <code>objc_msgSend</code>, so only the thin <code>@objc dynamic</code> surface is visible to the auto-hook. The macros instrument the source directly, which is why they cover all four dispatch kinds.</p>
@@ -323,9 +354,11 @@ sh go.sh /path/to/appletracedata</code></pre></div>
         <section id="faq">
             <h2>FAQ &amp; Troubleshooting</h2>
             <h4>My trace is empty / only has metadata</h4>
-            <p>The writer batches per thread. Call <code>APTFlush()</code> before reading the trace (e.g. on backgrounding, or at the end of your scenario). The demo apps flush for you.</p>
-            <h4>Build fails: <code>SDK does not contain 'libarclite'</code></h4>
-            <p>An old deployment target. Set <code>IPHONEOS_DEPLOYMENT_TARGET</code> to 12.0 or later — recent Xcode dropped the ARC compatibility library for pre-12 targets.</p>
+            <p>The writer drains every second, on backgrounding and at exit. If you pull while the app is still running, wait a second first (<code>appletrace record</code> does), or call <code>APTFlush()</code>. Also check <code>APPLETRACE_ENABLED</code> isn't <code>0</code>.</p>
+            <h4>Build fails on the deployment target</h4>
+            <p>AppleTrace 2.0 needs iOS 15+ / macOS 12+, the oldest targets current Xcode accepts.</p>
+            <h4>My <code>@Traced async</code> function shows up on its own track, not on a thread</h4>
+            <p>That's intended: <code>async</code> functions use async spans because an <code>await</code> may resume on another thread.</p>
             <h4>The Swift app crashes at launch with <code>Library not loaded: @rpath/SwiftTrace.framework</code></h4>
             <p>The app target needs <code>LD_RUNPATH_SEARCH_PATHS = @executable_path/Frameworks</code> so dyld can find the embedded dynamic framework on device.</p>
             <h4><code>AppleTraceAuto</code> traces nothing for some methods</h4>

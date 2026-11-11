@@ -7,22 +7,25 @@ set up, what we expect from changes, and how to validate them.
 
 ```bash
 git clone https://github.com/everettjf/appletrace.git
-cd AppleTrace
-python3 -m pip install -r requirements.txt
+cd appletrace
+swift build
 ```
 
-You will need Xcode 12+ (macOS 10.15+) to build the framework and samples, and a
-recent Python 3 for the tooling and tests.
+You will need Xcode 16+ (Swift 6, macOS 12+) to build the package, framework and
+samples. Python 3 is only needed for the legacy `merge.py` tooling and its tests
+(`python3 -m pip install -r requirements.txt`).
 
 ## Project Layout
 
 - `appletrace/` — core tracing framework (Objective-C/C++ runtime, public headers).
 - `appletrace/appletrace/src/objc/hook_objc_msgSend.m` — arm64/arm64e `objc_msgSend` hook.
-- `loader/`, `springboard/` — loader/packaging projects.
-- `merge.py`, `scripts/appletrace_cli.py`, `go.sh` — tooling (merge + open in Perfetto).
-- `tests/` — Python regression tests.
+- `Sources/` — SwiftPM targets: the C core wrapper, Swift API + macros, the
+  SwiftTrace bridge, `AppleTraceKit` (decoder/merger) and the `appletrace` CLI.
+- `loader/` — jailbreak AppleTraceLoader tweak (rootless / roothide).
+- `merge.py`, `scripts/appletrace_cli.py`, `go.sh` — legacy Python tooling.
+- `Tests/` — Swift package tests, Python regression tests, and host harnesses.
 
-See [AGENT.md](AGENT.md) for a deeper map and build/release details, and
+See [AGENTS.md](AGENTS.md) for repository conventions and
 [ROADMAP.md](ROADMAP.md) for where the project is headed.
 
 ## Making Changes
@@ -33,23 +36,32 @@ See [AGENT.md](AGENT.md) for a deeper map and build/release details, and
   after changing the hook.
 - Avoid adding work to the tracing hot path; prefer caching/interning and
   per-thread state over per-event allocation.
-- Update `README.md` / `README_CN.md` / `AGENT.md` when workflows or APIs change.
+- Update `README.md` / `README_CN.md` / the tutorials / `CHANGELOG.md` when
+  workflows or APIs change.
 
 ## Testing
 
 ```bash
-# Python tooling
-python3 -m pytest tests
+# Swift package: macros, runtime, async spans, concurrency, decoder
+swift test
 
-# objc_msgSend hook smoke tests (run on a Mac)
+# Writer stress test and host hook test
+./scripts/test_batching_stress.sh
+./scripts/test_hook_host.sh
+
+# objc_msgSend hook smoke tests on the Simulator
 ./scripts/test_objc_msgsend_hook.sh
 ./scripts/test_objc_msgsend_hook_experimental.sh
 
-# Real-device PAC validation (text + binary trace modes)
-DEVICE_ARCH=arm64e ./scripts/test_objc_msgsend_hook_device.sh
+# Real device (binary + text trace modes), arm64 and arm64e
+DEVICE_UDID=<udid> ./scripts/test_objc_msgsend_hook_device.sh
+DEVICE_UDID=<udid> DEVICE_ARCH=arm64e ./scripts/test_objc_msgsend_hook_device.sh
 
-# Verify the merge + export pipeline on real data
-python3 merge.py -d <path-to-appletracedata>
+# Jailbreak loader packages
+./scripts/build_jailbreak_packages.sh
+
+# Legacy Python tooling
+python3 -m pytest Tests
 ```
 
 When touching the framework, build the relevant Xcode targets and confirm a
@@ -58,6 +70,7 @@ trace renders correctly in [Perfetto](https://ui.perfetto.dev).
 ## Code Style
 
 - **Objective-C:** [Google Objective-C Style Guide](https://google.github.io/styleguide/objcguide.html)
+- **Swift:** follow the existing style (4-space indentation, doc comments on public API)
 - **Python:** [PEP 8](https://www.python.org/dev/peps/pep-0008/)
 - **Shell:** [Google Shell Style Guide](https://google.github.io/styleguide/shellguide.html)
 

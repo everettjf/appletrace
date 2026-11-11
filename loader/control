@@ -1,0 +1,13 @@
+Package: com.everettjf.appletrace-loader
+Name: AppleTraceLoader
+Version: @VERSION@
+Architecture: @ARCH@
+Description: Loads AppleTrace into selected apps to record Objective-C and manual trace events for Perfetto. Enable apps with `appletrace jb enable <bundle-id>`.
+Section: Development
+Depends: mobilesubstrate | ellekit
+Conflicts: com.everettjf.appletraceloader
+Replaces: com.everettjf.appletraceloader
+Priority: optional
+Author: everettjf
+Maintainer: everettjf
+Homepage: https://github.com/everettjf/appletrace

@@ -5,7 +5,7 @@
 //  Run it with:
 //      APPLETRACE_DATA_DIR=/tmp/aptdemo swift run AppleTraceAutoExample
 //  then merge and open the trace:
-//      python3 merge.py -d /tmp/aptdemo   # → trace.json in ui.perfetto.dev
+//      swift run appletrace open /tmp/aptdemo   # merge + open in Perfetto
 //
 //  It also doubles as the verification for the SwiftTrace bridge, which can't
 //  be exercised from an XCTest bundle (SwiftTrace's metadata scanning needs a
@@ -49,11 +49,13 @@ withSpan("startup") {
 traceInstant("ready")
 flush()
 
-// Verify the bridge actually captured the auto-traced methods.
+// Verify the bridge actually captured the auto-traced methods. Binary
+// fragments (the default) keep names in a plain string table, and text
+// fragments are JSON lines, so a substring search works for both.
 let dir = traceDirectory
 let fragments = (try? FileManager.default
     .contentsOfDirectory(atPath: dir)
-    .filter { $0.hasSuffix(".appletrace") }) ?? []
+    .filter { $0.hasSuffix(".appletracebin") || $0.hasSuffix(".appletrace") }) ?? []
 let text = fragments.reduce(into: "") { result, name in
     let url = URL(fileURLWithPath: dir).appendingPathComponent(name)
     if let data = try? Data(contentsOf: url) {
@@ -69,6 +71,6 @@ print("AppleTrace example → directory: \(dir)")
 print("  manual span 'startup': \(hasSpan ? "✅" : "❌")")
 print("  SwiftTrace auto fetch(): \(tracedFetch ? "✅" : "❌")")
 print("  SwiftTrace auto parse(): \(tracedParse ? "✅" : "❌")")
-print("Merge with:  python3 merge.py -d \"\(dir)\"  then open trace.json in ui.perfetto.dev")
+print("Open with:  swift run appletrace open \"\(dir)\"")
 
 exit(hasSpan && tracedFetch && tracedParse ? 0 : 1)

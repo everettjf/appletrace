@@ -6,12 +6,19 @@ the chosen direction: **source-level instrumentation via Swift macros as the
 primary route**, with a SwiftTrace-backed runtime hook as the secondary route.
 
 Implemented (SwiftPM package at the repo root — `Package.swift`, `Sources/`):
-- **Primary (macros), `AppleTrace` target:** `withSpan(_:_:)`, plus
-  `beginSection` / `endSection` / `traceInstant` / `traceCounter` /
-  `asyncBegin` / `asyncEnd` / `flush` wrappers over the C core; and `@Traced`
-  (body macro) + `@TraceAll` (member-attribute macro) that wrap function bodies
-  in a `#function`-named section regardless of dispatch kind. Verified on
-  Swift 6.2 with no experimental feature flags (`tests/AppleTraceTests`).
+- **Primary (macros), `AppleTrace` target:** `withSpan(_:_:)` /
+  `withAsyncSpan(_:_:)`, plus `beginSection` / `endSection` / `traceInstant` /
+  `traceCounter` / `newAsyncID` / `asyncBegin` / `asyncEnd` / `flush` wrappers
+  over the C core (string literals bind to `StaticString` overloads that pass
+  the literal to the core without bridging); and `@Traced` / `@Traced("name")`
+  (body macro) + `@TraceAll` (member-attribute macro, opt out with
+  `@NotTraced`) that wrap function bodies in a span regardless of dispatch kind.
+  Since 2.0 the span name is the signature qualified by its enclosing types
+  (`FeedViewModel.reload(force:)`), and `async` functions get an async span
+  (`b`/`e` with a per-call id) because an `await` may resume on another thread,
+  which would break a same-thread begin/end section. Verified on Swift 6.2 with
+  no experimental feature flags (`Tests/AppleTraceTests`) and on an iPhone 11
+  (iOS 26.0.1).
 - **Secondary (SwiftTrace bridge), `AppleTraceAuto` target:** bridges
   `johnno1962/SwiftTrace` so each traced method's entry/exit becomes an
   AppleTrace section (`AppleTraceAuto.trace(aClass:)` /
