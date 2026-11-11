@@ -127,7 +127,7 @@ open sample/AppleTraceSwiftDemo/AppleTraceSwiftDemo.xcodeproj</code></pre></div>
 
             <h3>Swift Package（Swift 项目，也是新项目最干净的方式）</h3>
             <div class="code"><div class="code-head"><span class="lang">swift — Package.swift</span><button class="copy">复制</button></div><pre><code>dependencies: [
-    .package(url: "https://github.com/everettjf/AppleTrace.git", from: "2.0.0"),
+    .package(url: "https://github.com/everettjf/AppleTrace.git", from: "2.1.0"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [
@@ -247,7 +247,7 @@ dispatch_async(queue, ^{
                 <tr><td>Counter</td><td><code>APTCounter</code></td><td>曲线轨道</td></tr>
                 <tr><td>Async</td><td><code>APTAsyncBegin</code> / <code>APTAsyncEnd</code></td><td>可跨线程的弧</td></tr>
             </table>
-            <p>Swift 封装一一对应：<code>traceInstant</code>、<code>traceCounter</code>、<code>newAsyncID</code>、<code>asyncBegin</code>、<code>asyncEnd</code>、<code>withAsyncSpan</code>。</p>
+            <p>Swift 封装一一对应：<code>traceInstant</code>、<code>traceCounter</code>、<code>newAsyncID</code>、<code>asyncBegin</code>、<code>asyncEnd</code>、<code>withAsyncSpan</code>。Swift 的 async span 会把当前任务名（Swift 6.2 的 <code>Task(name:)</code>，iOS 26 / macOS 26 及以上）记录为 <code>task</code> 参数；Objective-C 中可用 <code>APTAsyncBeginWithTask(name, id, label)</code>。</p>
         </section>
 
         <section id="visualize">
@@ -263,6 +263,12 @@ swift run appletrace open  mytrace                                    # → Perf
             <p><code>appletrace open</code> 在 <code>127.0.0.1</code> 上提供一个小页面，通过 Perfetto 的 postMessage 接口把 trace 交给浏览器里的 <a href="https://ui.perfetto.dev" target="_blank" rel="noopener">ui.perfetto.dev</a>——文件不会上传。也可以自己把 <code>trace.json</code> 拖进去。用 <kbd>W</kbd>/<kbd>S</kbd> 缩放、<kbd>A</kbd>/<kbd>D</kbd> 平移，搜索框可跳转到切片。</p>
             <h3>二进制与文本片段</h3>
             <p>默认写二进制片段（热路径上没有字符串格式化，体积约为文本的一半）。设置 <code>APPLETRACE_FORMAT=text</code> 可写人类可读的 JSON 行。<code>appletrace merge</code>（以及旧版 <code>merge.py</code>）两种都能解码，包括被杀进程留下的片段。</p>
+            <h3>CI 性能门禁</h3>
+            <p><code>appletrace summary</code> 输出每个 span 的次数、总耗时、自身耗时、平均、p50、p95 和最大耗时；<code>appletrace diff</code> 对比两份 trace 或已保存的基线，出现性能回退时以状态 2 退出。</p>
+            <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code>appletrace summary run1 run2 run3 --only MyApp. -o perf/baseline.json   # 保存基线
+appletrace diff perf/baseline.json current.json \
+  --metric p50 --threshold 20% --min-delta 2ms --only MyApp.            # 回退时退出码为 2</code></pre></div>
+            <p>两边各录多次运行，并且只对自己的 span 设门禁。<a href="https://github.com/everettjf/appletrace/blob/master/docs/ci-performance-gates.md" target="_blank" rel="noopener">CI 指南</a>里有模拟器录制脚本和 GitHub Actions 配置。</p>
         </section>
 
         <section id="demos">
@@ -280,7 +286,7 @@ swift run appletrace open  mytrace                                    # → Perf
             <p>AppleTraceLoader 插件会把 AppleTrace 注入到你指定的 App，支持 <strong>rootless</strong>（<code>/var/jb</code>，如 Dopamine）与 <strong>roothide</strong> 越狱。它根据自身路径推导越狱根目录，同一份二进制两种越狱都能用。</p>
             <ol class="steps">
                 <li><strong>安装插件包</strong>——rootless 用 <code>appletrace-loader_&lt;version&gt;_iphoneos-arm64.deb</code>，roothide 用 <code>…_iphoneos-arm64e.deb</code>：
-                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">复制</button></div><pre><code>swift run appletrace jb install appletrace-loader_2.0.0_iphoneos-arm64e.deb --host &lt;设备地址&gt;</code></pre></div>
+                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">复制</button></div><pre><code>swift run appletrace jb install appletrace-loader_2.1.0_iphoneos-arm64e.deb --host &lt;设备地址&gt;</code></pre></div>
                 </li>
                 <li><strong>录制 App</strong>——以开启追踪的状态重启 App，结束后通过 SSH 拉取并合并：
                     <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">复制</button></div><pre><code>swift run appletrace jb record com.example.App --host &lt;设备地址&gt; \

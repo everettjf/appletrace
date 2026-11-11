@@ -10,6 +10,32 @@ import XCTest
 @testable import AppleTrace
 
 final class RuntimeTests: XCTestCase {
+    func testNamedTaskIsRecordedOnAsyncSpans() async throws {
+        #if compiler(>=6.2)
+        guard #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) else {
+            throw XCTSkip("Task.name needs OS 26")
+        }
+        let name = TraceReader.uniqueName("named-task-span")
+        let taskName = TraceReader.uniqueName("loader")
+        await Task(name: taskName) {
+            await withAsyncSpan(name) {
+                await Task.yield()
+            }
+        }.value
+        let anonymous = name + "-anonymous"
+        await Task {
+            await withAsyncSpan(anonymous) {}
+        }.value
+
+        let begin = try XCTUnwrap(try TraceReader.events(named: name).first { $0.phase == "b" })
+        XCTAssertEqual(begin.argument("task"), .string(taskName))
+        let anonymousBegin = try XCTUnwrap(try TraceReader.events(named: anonymous).first { $0.phase == "b" })
+        XCTAssertNil(anonymousBegin.argument("task"))
+        #else
+        throw XCTSkip("Task.name needs the Swift 6.2 compiler")
+        #endif
+    }
+
     func testDefaultFormatIsBinary() throws {
         withSpan("runtime-format-probe") {}
         flush()

@@ -22,6 +22,7 @@ swift test
 swift run AppleTraceAutoExample
 ./scripts/test_batching_stress.sh
 ./scripts/test_hook_host.sh
+./scripts/test_ci_gates.sh
 ```
 
 Run package tests after Swift API or macro changes. For runtime or hook changes, also run the Simulator scripts (`scripts/test_objc_msgsend_hook*.sh`), exercise a real iOS device (`DEVICE_UDID=… [DEVICE_ARCH=arm64e] scripts/test_objc_msgsend_hook_device.sh`), and open the exported trace in Perfetto (`swift run appletrace open <dir>`). For loader changes, build the packages and test `appletrace jb record` on a rootless or roothide device.

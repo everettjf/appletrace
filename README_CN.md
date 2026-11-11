@@ -81,6 +81,8 @@ AppleTrace 是一个面向 iOS/macOS 的追踪工具。你给 App 埋点——�
   文件，即使 App 被杀，trace 依然可读。
 - 🛠️ **一条命令完成采集**——`appletrace record` 在设备上启动 App、等待、停止、拉取、
   合并并打开 Perfetto，不再需要 Python。
+- 🚦 **CI 性能门禁**——`appletrace summary` 输出每个 span 的次数、总耗时、自身耗时和
+  p50/p95；`appletrace diff` 与基线对比，出现性能回退时以非零状态退出。
 - 🔓 **越狱设备上追踪任意 App**——AppleTraceLoader 插件支持 rootless 与 roothide 越狱，
   通过 SSH 用 `appletrace jb …` 控制。
 - 🔍 **运行时过滤**——用类名前缀白名单 / 黑名单（`APPLETRACE_TRACE_CLASS_ALLOW` /
@@ -209,7 +211,7 @@ swift run appletrace open mytrace
 ### Swift Package Manager
 
 ```swift
-.package(url: "https://github.com/everettjf/appletrace.git", from: "2.0.0")
+.package(url: "https://github.com/everettjf/appletrace.git", from: "2.1.0")
 ```
 
 | Product | 说明 |
@@ -324,6 +326,11 @@ dispatch_async(queue, ^{
 });
 ```
 
+在 Swift 中，`withAsyncSpan` 和 `async` 函数上的 `@Traced` 会把当前任务的名字
+（Swift 6.2 的 `Task(name:)` / `addTask(name:)`，iOS 26 / macOS 26 及以上）记录为
+span 的 `task` 参数。在 Objective-C / C 中可以用 `APTAsyncBeginWithTask(name, id, label)`
+传入标签。
+
 ### 运行时控制
 
 ```objc
@@ -358,6 +365,11 @@ BOOL hooked = APTIsObjcMsgSendHookInstalled();
 ```text
 appletrace merge <trace-dir> [-o trace.json] [--raw]
 appletrace open <trace-dir | trace.json>
+appletrace summary <trace>... [--top 20] [--sort total|self|mean|p50|p95|max|count|name]
+                   [--only <prefixes>] [--json] [-o summary.json]
+appletrace diff <baseline> <current> [--metric total|self|mean|p50|p95|max|count]
+                [--threshold 10%] [--min-delta 1ms] [--only <prefixes>]
+                [--fail-on-missing] [--all] [--json]
 appletrace devices
 appletrace pull   --bundle-id <id> [--device <udid|name>] [-o <dir>]
 appletrace record --bundle-id <id> [--device <udid|name>] [--duration <sec>]
@@ -371,6 +383,11 @@ appletrace jb install|enable|disable|list|pull|record …
   `appletrace jb record`。
 - `merge` 同时支持二进制和文本片段（包括被杀进程留下的片段），默认折叠 begin/end 对，
   加 `--raw` 则保留原始事件。
+- `summary` 输出每个 span 的次数、总耗时、自身耗时、平均、p50、p95 和最大耗时；
+  每个参数算一次运行，多次运行会合并统计。`-o` 把结果保存为基线。
+- `diff` 对比两份 trace 或 summary：某个 span 的变化同时超过 `--threshold` 和
+  `--min-delta` 时以状态 2 退出（出错为 1，否则为 0）。GitHub Actions 的配置见
+  [docs/ci-performance-gates.md](docs/ci-performance-gates.md)。
 - Python 的 `merge.py` / `scripts/appletrace_cli.py` / `go.sh` 仍然可用，输出一致。
 
 ---
@@ -386,7 +403,7 @@ AppleTraceLoader 插件会把 AppleTrace 注入到你指定的 App 中，支持 
    - roothide：`appletrace-loader_<version>_iphoneos-arm64e.deb`
 
    ```bash
-   appletrace jb install appletrace-loader_2.0.0_iphoneos-arm64e.deb --host <设备地址> [--port 22]
+   appletrace jb install appletrace-loader_2.1.0_iphoneos-arm64e.deb --host <设备地址> [--port 22]
    ```
 
    `jb install` 会执行 `dpkg`，需要 root SSH。如果只能以 `mobile` 登录（例如 roothide
@@ -448,6 +465,7 @@ arm64e 系统 App 运行正常。
 ```bash
 swift test                                     # 宏、运行时、async span、并发、解码器
 ./scripts/test_batching_stress.sh              # 写入压测：格式、刷盘、SIGKILL、滚动、错误配置
+./scripts/test_ci_gates.sh                     # appletrace summary / diff 及其退出状态
 ./scripts/test_objc_msgsend_hook.sh            # 模拟器上的 hook 冒烟测试
 ./scripts/test_objc_msgsend_hook_experimental.sh
 DEVICE_UDID=<udid> ./scripts/test_objc_msgsend_hook_device.sh                  # 真机，arm64

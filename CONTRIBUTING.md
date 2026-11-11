@@ -49,6 +49,9 @@ swift test
 ./scripts/test_batching_stress.sh
 ./scripts/test_hook_host.sh
 
+# appletrace summary / diff and their exit statuses
+./scripts/test_ci_gates.sh
+
 # objc_msgSend hook smoke tests on the Simulator
 ./scripts/test_objc_msgsend_hook.sh
 ./scripts/test_objc_msgsend_hook_experimental.sh

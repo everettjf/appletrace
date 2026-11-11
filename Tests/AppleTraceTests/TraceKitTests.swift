@@ -76,6 +76,27 @@ final class TraceKitTests: XCTestCase {
         XCTAssertEqual(events[2].pid, 9)
     }
 
+    func testTaskRecordNamesTheFollowingAsyncBegin() throws {
+        let T = UInt8(ascii: "T"), b = UInt8(ascii: "b"), e = UInt8(ascii: "e")
+        let data = binaryFragment(
+            pid: 4,
+            records: [(T, 1, 3, 10, 77), (b, 0, 3, 10, 77), (b, 0, 3, 11, 78), (e, 0, 5, 20, 77)],
+            strings: [(0, "FeedStore.refresh()"), (1, "refresh-task")]
+        )
+        let events = try FragmentDecoder.decode(data)
+        XCTAssertEqual(events.map(\.phase), ["b", "b", "e"], "the T record itself is not an event")
+        XCTAssertEqual(events[0].argument("task"), .string("refresh-task"))
+        XCTAssertEqual(events[0].id, 77)
+        XCTAssertNil(events[1].argument("task"), "only the begin with the same id gets the name")
+        XCTAssertNil(events[2].argument("task"))
+
+        let text = Data("""
+        {"name":"load","cat":"appletrace","ph":"b","id":5,"pid":1,"tid":0,"ts":1,"args":{"task":"loader"}}
+
+        """.utf8)
+        XCTAssertEqual(try FragmentDecoder.decode(text).first?.argument("task"), .string("loader"))
+    }
+
     func testUndefinedStringIsAnError() {
         let data = binaryFragment(pid: 1, records: [(UInt8(ascii: "B"), 42, 0, 0, 0)], strings: [])
         XCTAssertThrowsError(try FragmentDecoder.decode(data))

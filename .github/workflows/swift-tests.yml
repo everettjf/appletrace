@@ -27,6 +27,10 @@ jobs:
         run: |
           swift run appletrace version
           swift run appletrace merge sampledata -o "${RUNNER_TEMP}/sample.json"
+          swift run appletrace summary sampledata
+
+      - name: Test the summary / diff performance gates
+        run: ./scripts/test_ci_gates.sh
 
       - name: Build both routes for the iOS Simulator
         run: |

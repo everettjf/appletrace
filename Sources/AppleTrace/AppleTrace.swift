@@ -19,6 +19,19 @@ import CAppleTrace
 
 // MARK: - Manual API
 
+/// Begins an async span, recording the current Swift task's name (Swift 6.2
+/// `Task(name:)` / `addTask(name:)`, OS 26 and later) as its `task` argument.
+@usableFromInline
+func asyncBeginRecordingTask(_ name: UnsafePointer<CChar>, _ id: UInt64) {
+    #if compiler(>=6.2)
+    if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *), let task = Task.name {
+        task.withCString { APTAsyncBeginWithTask(name, id, $0) }
+        return
+    }
+    #endif
+    APTAsyncBegin(name, id)
+}
+
 @usableFromInline
 @inline(__always)
 func cString(_ name: StaticString) -> UnsafePointer<CChar> {
@@ -75,11 +88,12 @@ public func withSpan<T>(_ name: String, _ body: () throws -> T) rethrows -> T {
 }
 
 /// Runs async `body` inside an async span, which Perfetto draws on its own
-/// track and which may begin and end on different threads.
+/// track and which may begin and end on different threads. The span records
+/// the current task's name, if it has one, as its `task` argument.
 @inlinable
 public func withAsyncSpan<T>(_ name: StaticString, _ body: () async throws -> T) async rethrows -> T {
     let id = APTNewAsyncID()
-    APTAsyncBegin(cString(name), id)
+    asyncBeginRecordingTask(cString(name), id)
     defer { APTAsyncEnd(cString(name), id) }
     return try await body()
 }
@@ -89,7 +103,7 @@ public func withAsyncSpan<T>(_ name: StaticString, _ body: () async throws -> T)
 @_disfavoredOverload
 public func withAsyncSpan<T>(_ name: String, _ body: () async throws -> T) async rethrows -> T {
     let id = APTNewAsyncID()
-    APTAsyncBegin(name, id)
+    name.withCString { asyncBeginRecordingTask($0, id) }
     defer { APTAsyncEnd(name, id) }
     return try await body()
 }
@@ -210,7 +224,7 @@ public func _tracedEnd(_ name: StaticString) {
 @inlinable
 public func _tracedAsyncBegin(_ name: StaticString) -> UInt64 {
     let id = APTNewAsyncID()
-    APTAsyncBegin(cString(name), id)
+    asyncBeginRecordingTask(cString(name), id)
     return id
 }
 
@@ -229,7 +243,8 @@ public func _tracedAsyncEnd(_ name: StaticString, _ id: UInt64) {
 ///
 /// Synchronous functions get a section (`B`/`E`). `async` functions get an
 /// async span (`b`/`e`) instead, because an `await` may resume on a different
-/// thread and a section must begin and end on the same one.
+/// thread and a section must begin and end on the same one; it records the
+/// current task's name (Swift 6.2 named tasks, OS 26+) as its `task` argument.
 ///
 /// ```swift
 /// @Traced

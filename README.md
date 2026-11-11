@@ -89,6 +89,9 @@ durations, threads, and counters.
   leaves a readable trace.
 - 🛠️ **One-command workflow** — `appletrace record` launches the app on a
   device, waits, stops it, pulls, merges, and opens Perfetto. No Python needed.
+- 🚦 **Performance gates in CI** — `appletrace summary` reports per-span count,
+  total, self and p50/p95 times; `appletrace diff` compares them with a
+  baseline and exits non-zero when a span regressed.
 - 🔓 **Any app on a jailbroken device** — an AppleTraceLoader tweak for rootless
   and roothide jailbreaks, driven by `appletrace jb …` over SSH.
 - 🔍 **Runtime filtering** — scope automatic tracing with class-prefix allow/deny
@@ -220,7 +223,7 @@ drag `trace.json` into Perfetto yourself.
 ### Swift Package Manager
 
 ```swift
-.package(url: "https://github.com/everettjf/appletrace.git", from: "2.0.0")
+.package(url: "https://github.com/everettjf/appletrace.git", from: "2.1.0")
 ```
 
 | Product | What it is |
@@ -338,6 +341,11 @@ dispatch_async(queue, ^{
 });
 ```
 
+In Swift, `withAsyncSpan` and `@Traced` on `async` functions record the current
+task's name (Swift 6.2 `Task(name:)` / `addTask(name:)`, iOS 26 / macOS 26 and
+later) as the span's `task` argument. From Objective-C or C, pass a label with
+`APTAsyncBeginWithTask(name, id, label)`.
+
 ### Runtime Controls
 
 ```objc
@@ -372,6 +380,11 @@ Malformed values are logged and ignored (the default applies).
 ```text
 appletrace merge <trace-dir> [-o trace.json] [--raw]
 appletrace open <trace-dir | trace.json>
+appletrace summary <trace>... [--top 20] [--sort total|self|mean|p50|p95|max|count|name]
+                   [--only <prefixes>] [--json] [-o summary.json]
+appletrace diff <baseline> <current> [--metric total|self|mean|p50|p95|max|count]
+                [--threshold 10%] [--min-delta 1ms] [--only <prefixes>]
+                [--fail-on-missing] [--all] [--json]
 appletrace devices
 appletrace pull   --bundle-id <id> [--device <udid|name>] [-o <dir>]
 appletrace record --bundle-id <id> [--device <udid|name>] [--duration <sec>]
@@ -385,6 +398,13 @@ appletrace jb install|enable|disable|list|pull|record …
   Use it for development-signed apps; use `appletrace jb record` for anything else.
 - `merge` reads both binary and text fragments (including ones left by a killed
   process) and collapses begin/end pairs unless `--raw` is given.
+- `summary` prints per-span count, total, self, mean, p50, p95 and max
+  durations; each argument is one run, and several runs combine. `-o` saves the
+  summary as a baseline.
+- `diff` compares two traces or summaries and exits with status 2 when a span
+  regressed by more than `--threshold` and `--min-delta` (1 on errors, 0
+  otherwise). See [docs/ci-performance-gates.md](docs/ci-performance-gates.md)
+  for a GitHub Actions setup.
 - The Python `merge.py` / `scripts/appletrace_cli.py` / `go.sh` tools still work
   and produce the same output.
 
@@ -402,7 +422,7 @@ the jailbreak root from its own path, so the same binaries work on both.
    - roothide: `appletrace-loader_<version>_iphoneos-arm64e.deb`
 
    ```bash
-   appletrace jb install appletrace-loader_2.0.0_iphoneos-arm64e.deb --host <device> [--port 22]
+   appletrace jb install appletrace-loader_2.1.0_iphoneos-arm64e.deb --host <device> [--port 22]
    ```
 
    `jb install` runs `dpkg` and needs root SSH. If you can only log in as
@@ -470,6 +490,7 @@ text format work, and injected arm64e system apps run normally.
 ```bash
 swift test                                     # macros, runtime, async spans, concurrency, decoder
 ./scripts/test_batching_stress.sh              # writer stress: formats, drains, SIGKILL, rollover, bad config
+./scripts/test_ci_gates.sh                     # appletrace summary / diff and their exit statuses
 ./scripts/test_objc_msgsend_hook.sh            # hook smoke test on the Simulator
 ./scripts/test_objc_msgsend_hook_experimental.sh
 DEVICE_UDID=<udid> ./scripts/test_objc_msgsend_hook_device.sh                  # real device, arm64

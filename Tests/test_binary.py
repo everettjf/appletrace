@@ -56,6 +56,18 @@ class BinaryDecodeTests(unittest.TestCase):
         self.assertEqual([e["ph"] for e in events], ["b", "e"])
         self.assertEqual({e["id"] for e in events}, {99})
 
+    def test_task_record_names_following_async_begin(self) -> None:
+        enc = build()
+        enc.task("refresh-task", tid=3, ts=10, async_id=77)
+        enc.async_event("b", "refresh", tid=3, ts=10, async_id=77)
+        enc.async_event("b", "refresh", tid=3, ts=11, async_id=78)
+        enc.async_event("e", "refresh", tid=5, ts=20, async_id=77)
+        events = list(decode(enc.to_bytes()))
+        self.assertEqual([e["ph"] for e in events], ["b", "b", "e"])
+        self.assertEqual(events[0]["args"], {"task": "refresh-task"})
+        self.assertNotIn("args", events[1])
+        self.assertNotIn("args", events[2])
+
     def test_metadata_has_args_name_and_no_cat(self) -> None:
         enc = build(pid=5)
         enc.metadata("thread_name", tid=0, value="Main Thread")

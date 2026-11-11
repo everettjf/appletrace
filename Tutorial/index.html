@@ -132,7 +132,7 @@ open sample/AppleTraceSwiftDemo/AppleTraceSwiftDemo.xcodeproj</code></pre></div>
             <h3>Swift Package (for Swift, and the cleanest path for new projects)</h3>
             <p>Add the package and depend on the <code>AppleTrace</code> product (and optionally <code>AppleTraceAuto</code>):</p>
             <div class="code"><div class="code-head"><span class="lang">swift — Package.swift</span><button class="copy">copy</button></div><pre><code>dependencies: [
-    .package(url: "https://github.com/everettjf/AppleTrace.git", from: "2.0.0"),
+    .package(url: "https://github.com/everettjf/AppleTrace.git", from: "2.1.0"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [
@@ -267,7 +267,7 @@ dispatch_async(queue, ^{
                 <tr><td>Counter</td><td><code>APTCounter</code></td><td>A graph track</td></tr>
                 <tr><td>Async</td><td><code>APTAsyncBegin</code> / <code>APTAsyncEnd</code></td><td>Arcs that can cross threads</td></tr>
             </table>
-            <p>The Swift wrappers mirror these: <code>traceInstant</code>, <code>traceCounter</code>, <code>newAsyncID</code>, <code>asyncBegin</code>, <code>asyncEnd</code>, <code>withAsyncSpan</code>.</p>
+            <p>The Swift wrappers mirror these: <code>traceInstant</code>, <code>traceCounter</code>, <code>newAsyncID</code>, <code>asyncBegin</code>, <code>asyncEnd</code>, <code>withAsyncSpan</code>. Async spans from Swift record the current task's name (Swift 6.2 <code>Task(name:)</code>, iOS 26 / macOS 26 and later) as their <code>task</code> argument; from Objective-C use <code>APTAsyncBeginWithTask(name, id, label)</code>.</p>
         </section>
 
         <!-- VISUALIZE -->
@@ -284,6 +284,12 @@ swift run appletrace open  mytrace                                    # → Perf
             <p><code>appletrace open</code> serves a small page on <code>127.0.0.1</code> that hands the trace to <a href="https://ui.perfetto.dev" target="_blank" rel="noopener">ui.perfetto.dev</a> in your browser with Perfetto's postMessage API — the file is never uploaded. You can also drag <code>trace.json</code> in yourself. Use <kbd>W</kbd>/<kbd>S</kbd> to zoom, <kbd>A</kbd>/<kbd>D</kbd> to pan, and the search box to jump to a slice.</p>
             <h3>Binary and text fragments</h3>
             <p>Fragments are binary by default (no string formatting on the hot path, about half the size). Set <code>APPLETRACE_FORMAT=text</code> for human-readable JSON lines. <code>appletrace merge</code> (and the legacy <code>merge.py</code>) decode both, including fragments left behind by a killed process.</p>
+            <h3>Performance gates in CI</h3>
+            <p><code>appletrace summary</code> reports per-span count, total, self, mean, p50, p95 and max times; <code>appletrace diff</code> compares two traces or a saved baseline and exits with status 2 when a span regressed.</p>
+            <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code>appletrace summary run1 run2 run3 --only MyApp. -o perf/baseline.json   # save a baseline
+appletrace diff perf/baseline.json current.json \
+  --metric p50 --threshold 20% --min-delta 2ms --only MyApp.            # exit 2 on regression</code></pre></div>
+            <p>Record several runs on each side and gate only your own spans. The <a href="https://github.com/everettjf/appletrace/blob/master/docs/ci-performance-gates.md" target="_blank" rel="noopener">CI guide</a> has a Simulator recording loop and a GitHub Actions job.</p>
         </section>
 
         <!-- DEMOS -->
@@ -304,7 +310,7 @@ swift run appletrace open  mytrace                                    # → Perf
             <p>The AppleTraceLoader tweak injects AppleTrace into apps you choose on <strong>rootless</strong> (<code>/var/jb</code>, e.g. Dopamine) and <strong>roothide</strong> jailbreaks. It derives the jailbreak root from its own path, so the same binaries work on both.</p>
             <ol class="steps">
                 <li><strong>Install the package</strong> from the release — <code>appletrace-loader_&lt;version&gt;_iphoneos-arm64.deb</code> for rootless, <code>…_iphoneos-arm64e.deb</code> for roothide:
-                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code>swift run appletrace jb install appletrace-loader_2.0.0_iphoneos-arm64e.deb --host &lt;device&gt;</code></pre></div>
+                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code>swift run appletrace jb install appletrace-loader_2.1.0_iphoneos-arm64e.deb --host &lt;device&gt;</code></pre></div>
                 </li>
                 <li><strong>Record an app</strong> — it is relaunched with tracing on, then stopped, pulled over SSH and merged:
                     <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code>swift run appletrace jb record com.example.App --host &lt;device&gt; \

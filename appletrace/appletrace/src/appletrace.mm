@@ -645,6 +645,48 @@ public:
         });
     }
 
+    // Async begin annotated with the Swift task that started it. Text mode
+    // adds `"args":{"task":...}`; binary mode writes a 'T' record (name = task
+    // name, arg = async id) immediately before the 'b' record, under the same
+    // lock so both land in one batch.
+    void WriteAsyncBeginWithTask(const char *name, uint64_t async_id, const char *task) {
+        if (!task || !*task) {
+            WriteAsync(name, 'b', async_id);
+            return;
+        }
+        if (!Ready(name)) {
+            return;
+        }
+
+        const uint64_t thread_id = ResolveThreadId();
+        const uint64_t elapsed_us = ElapsedMicros();
+        if (binary_) {
+            if (!IsEnabled() || !queue_) {
+                return;
+            }
+            ThreadLog *thread_log = AcquireThreadLog();
+            os_unfair_lock_lock(&thread_log->lock);
+            uint32_t task_id = BinaryNameIdLocked(thread_log, task);
+            uint32_t name_id = BinaryNameIdLocked(thread_log, name);
+            AppendBinaryRecordLocked(thread_log, 'T', task_id, thread_id, elapsed_us, async_id);
+            AppendBinaryRecordLocked(thread_log, 'b', name_id, thread_id, elapsed_us, async_id);
+            if (thread_log->pending.size() >= kBatchFlushThresholdBytes) {
+                ShipLocked(thread_log->pending);
+            }
+            os_unfair_lock_unlock(&thread_log->lock);
+            return;
+        }
+        EmitText([&](std::string &out) {
+            AppendEventPrefix(out, name, 'b');
+            AppendLiteral(out, ",\"id\":");
+            AppendDecimal(out, async_id);
+            AppendEventSuffix(out, thread_id, elapsed_us);
+            AppendLiteral(out, ",\"args\":{\"task\":\"");
+            AppendJSONEscaped(out, task);
+            AppendLiteral(out, "\"}}");
+        });
+    }
+
     // Moves every thread's pending bytes to the writer queue, then (when
     // `sync`) waits for them to reach the mapped file and syncs it to disk.
     void Flush() {
@@ -849,6 +891,14 @@ private:
         return name_id;
     }
 
+    void AppendBinaryRecordLocked(ThreadLog *thread_log, char phase, uint32_t name_id, uint64_t tid, uint64_t ts, uint64_t arg) {
+        AppendByte(thread_log->pending, static_cast<uint8_t>(phase));
+        AppendU32(thread_log->pending, name_id);
+        AppendU64(thread_log->pending, tid);
+        AppendU64(thread_log->pending, ts);
+        AppendU64(thread_log->pending, arg);
+    }
+
     void EmitBinaryEvent(char phase, const char *name, uint64_t tid, uint64_t ts, uint64_t arg) {
         if (!IsEnabled() || !queue_) {
             return;
@@ -856,11 +906,7 @@ private:
         ThreadLog *thread_log = AcquireThreadLog();
         os_unfair_lock_lock(&thread_log->lock);
         uint32_t name_id = BinaryNameIdLocked(thread_log, name);
-        AppendByte(thread_log->pending, static_cast<uint8_t>(phase));
-        AppendU32(thread_log->pending, name_id);
-        AppendU64(thread_log->pending, tid);
-        AppendU64(thread_log->pending, ts);
-        AppendU64(thread_log->pending, arg);
+        AppendBinaryRecordLocked(thread_log, phase, name_id, tid, ts, arg);
         if (thread_log->pending.size() >= kBatchFlushThresholdBytes) {
             ShipLocked(thread_log->pending);
         }
@@ -984,6 +1030,10 @@ public:
         trace_.WriteAsync(name, 'e', async_id);
     }
 
+    void AsyncBeginWithTask(const char *name, uint64_t async_id, const char *task) {
+        trace_.WriteAsyncBeginWithTask(name, async_id, task);
+    }
+
     void Flush() {
         trace_.Flush();
     }
@@ -1069,6 +1119,10 @@ void APTAsyncBegin(const char *name, uint64_t async_id) {
 
 void APTAsyncEnd(const char *name, uint64_t async_id) {
     appletrace::TraceManager::Instance().AsyncEnd(name, async_id);
+}
+
+void APTAsyncBeginWithTask(const char *name, uint64_t async_id, const char *task_name) {
+    appletrace::TraceManager::Instance().AsyncBeginWithTask(name, async_id, task_name);
 }
 
 uint64_t APTNewAsyncID(void) {

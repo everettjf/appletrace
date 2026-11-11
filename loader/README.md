@@ -28,7 +28,7 @@ Both packages contain universal arm64 + arm64e binaries, ad-hoc signed with
 ## Use
 
 ```bash
-appletrace jb install build/jailbreak/appletrace-loader_2.0.0_iphoneos-arm64e.deb --host <device>
+appletrace jb install build/jailbreak/appletrace-loader_2.1.0_iphoneos-arm64e.deb --host <device>
 appletrace jb record com.example.App --host <device> --duration 15 --hook --open
 ```
 
