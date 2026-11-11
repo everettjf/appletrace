@@ -1,6 +1,6 @@
 # AppleTrace Roadmap
 
-Status as of 2.0.0 (November 2026). Items marked ✅ have shipped; see
+Status as of 2.1.0 (November 2026). Items marked ✅ have shipped; see
 [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## 1. Where We Are

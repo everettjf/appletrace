@@ -132,7 +132,7 @@ open sample/AppleTraceSwiftDemo/AppleTraceSwiftDemo.xcodeproj</code></pre></div>
             <h3>Swift Package (for Swift, and the cleanest path for new projects)</h3>
             <p>Add the package and depend on the <code>AppleTrace</code> product (and optionally <code>AppleTraceAuto</code>):</p>
             <div class="code"><div class="code-head"><span class="lang">swift — Package.swift</span><button class="copy">copy</button></div><pre><code>dependencies: [
-    .package(url: "https://github.com/everettjf/AppleTrace.git", from: "2.0.0"),
+    .package(url: "https://github.com/everettjf/AppleTrace.git", from: "2.1.0"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [
@@ -310,7 +310,7 @@ appletrace diff perf/baseline.json current.json \
             <p>The AppleTraceLoader tweak injects AppleTrace into apps you choose on <strong>rootless</strong> (<code>/var/jb</code>, e.g. Dopamine) and <strong>roothide</strong> jailbreaks. It derives the jailbreak root from its own path, so the same binaries work on both.</p>
             <ol class="steps">
                 <li><strong>Install the package</strong> from the release — <code>appletrace-loader_&lt;version&gt;_iphoneos-arm64.deb</code> for rootless, <code>…_iphoneos-arm64e.deb</code> for roothide:
-                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code>swift run appletrace jb install appletrace-loader_2.0.0_iphoneos-arm64e.deb --host &lt;device&gt;</code></pre></div>
+                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code>swift run appletrace jb install appletrace-loader_2.1.0_iphoneos-arm64e.deb --host &lt;device&gt;</code></pre></div>
                 </li>
                 <li><strong>Record an app</strong> — it is relaunched with tracing on, then stopped, pulled over SSH and merged:
                     <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">copy</button></div><pre><code>swift run appletrace jb record com.example.App --host &lt;device&gt; \

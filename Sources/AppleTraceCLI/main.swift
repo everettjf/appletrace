@@ -47,7 +47,7 @@ COMMANDS
            take comma-separated class-name prefixes.
 """
 
-let toolVersion = "2.0.0"
+let toolVersion = "2.1.0"
 
 struct CLIError: Error, CustomStringConvertible {
     var description: String

@@ -211,7 +211,7 @@ swift run appletrace open mytrace
 ### Swift Package Manager
 
 ```swift
-.package(url: "https://github.com/everettjf/appletrace.git", from: "2.0.0")
+.package(url: "https://github.com/everettjf/appletrace.git", from: "2.1.0")
 ```
 
 | Product | 说明 |
@@ -403,7 +403,7 @@ AppleTraceLoader 插件会把 AppleTrace 注入到你指定的 App 中，支持 
    - roothide：`appletrace-loader_<version>_iphoneos-arm64e.deb`
 
    ```bash
-   appletrace jb install appletrace-loader_2.0.0_iphoneos-arm64e.deb --host <设备地址> [--port 22]
+   appletrace jb install appletrace-loader_2.1.0_iphoneos-arm64e.deb --host <设备地址> [--port 22]
    ```
 
    `jb install` 会执行 `dpkg`，需要 root SSH。如果只能以 `mobile` 登录（例如 roothide

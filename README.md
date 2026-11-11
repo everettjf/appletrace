@@ -223,7 +223,7 @@ drag `trace.json` into Perfetto yourself.
 ### Swift Package Manager
 
 ```swift
-.package(url: "https://github.com/everettjf/appletrace.git", from: "2.0.0")
+.package(url: "https://github.com/everettjf/appletrace.git", from: "2.1.0")
 ```
 
 | Product | What it is |
@@ -422,7 +422,7 @@ the jailbreak root from its own path, so the same binaries work on both.
    - roothide: `appletrace-loader_<version>_iphoneos-arm64e.deb`
 
    ```bash
-   appletrace jb install appletrace-loader_2.0.0_iphoneos-arm64e.deb --host <device> [--port 22]
+   appletrace jb install appletrace-loader_2.1.0_iphoneos-arm64e.deb --host <device> [--port 22]
    ```
 
    `jb install` runs `dpkg` and needs root SSH. If you can only log in as

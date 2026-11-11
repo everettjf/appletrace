@@ -127,7 +127,7 @@ open sample/AppleTraceSwiftDemo/AppleTraceSwiftDemo.xcodeproj</code></pre></div>
 
             <h3>Swift Package（Swift 项目，也是新项目最干净的方式）</h3>
             <div class="code"><div class="code-head"><span class="lang">swift — Package.swift</span><button class="copy">复制</button></div><pre><code>dependencies: [
-    .package(url: "https://github.com/everettjf/AppleTrace.git", from: "2.0.0"),
+    .package(url: "https://github.com/everettjf/AppleTrace.git", from: "2.1.0"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [
@@ -286,7 +286,7 @@ appletrace diff perf/baseline.json current.json \
             <p>AppleTraceLoader 插件会把 AppleTrace 注入到你指定的 App，支持 <strong>rootless</strong>（<code>/var/jb</code>，如 Dopamine）与 <strong>roothide</strong> 越狱。它根据自身路径推导越狱根目录，同一份二进制两种越狱都能用。</p>
             <ol class="steps">
                 <li><strong>安装插件包</strong>——rootless 用 <code>appletrace-loader_&lt;version&gt;_iphoneos-arm64.deb</code>，roothide 用 <code>…_iphoneos-arm64e.deb</code>：
-                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">复制</button></div><pre><code>swift run appletrace jb install appletrace-loader_2.0.0_iphoneos-arm64e.deb --host &lt;设备地址&gt;</code></pre></div>
+                    <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">复制</button></div><pre><code>swift run appletrace jb install appletrace-loader_2.1.0_iphoneos-arm64e.deb --host &lt;设备地址&gt;</code></pre></div>
                 </li>
                 <li><strong>录制 App</strong>——以开启追踪的状态重启 App，结束后通过 SSH 拉取并合并：
                     <div class="code"><div class="code-head"><span class="lang">bash</span><button class="copy">复制</button></div><pre><code>swift run appletrace jb record com.example.App --host &lt;设备地址&gt; \
