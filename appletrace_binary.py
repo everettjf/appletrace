@@ -18,7 +18,7 @@ Format (little-endian)::
         0x01            -> string definition: name_id(uint32) len(uint32) utf8[len]
         ASCII phase     -> event: name_id(uint32) tid(uint64) ts(uint64) arg(uint64)
 
-    phase is one of 'B' 'E' 'i' 'C' 'b' 'e' 'M'; ``arg`` is phase-specific:
+    phase is one of 'B' 'E' 'i' 'C' 'b' 'e' 'M' 'T'; ``arg`` is phase-specific:
         'C'        -> IEEE-754 double bits of the counter value
         'b' / 'e'  -> async id
         'M'        -> name_id of the metadata value string (args.name)
@@ -89,6 +89,10 @@ class Encoder:
             raise ValueError(f"async phase must be b or e, got {phase!r}")
         self._event(phase, name, tid, ts, async_id)
 
+    def task(self, task_name: str, tid: int, ts: int, async_id: int) -> None:
+        """Names the task of the async begin that follows on the same thread."""
+        self._event("T", task_name, tid, ts, async_id)
+
     def metadata(self, name: str, tid: int, value: str) -> None:
         value_id = self._intern(value)
         self._event("M", name, tid, 0, value_id)
@@ -117,6 +121,9 @@ def decode(data: bytes, *, names: Dict[int, str] | None = None) -> Iterator[dict
     if names is None:
         names = {}
     size = len(data)
+    # 'T' records name the task of the next async begin with the same
+    # (tid, async id).
+    pending_tasks: Dict[tuple, str] = {}
 
     while offset < size:
         tag = data[offset]
@@ -146,6 +153,10 @@ def decode(data: bytes, *, names: Dict[int, str] | None = None) -> Iterator[dict
         if name is None:
             raise ValueError(f"event references undefined string id {name_id}")
 
+        if phase == "T":
+            pending_tasks[(tid, arg)] = name
+            continue
+
         event: dict = {"name": name, "ph": phase, "pid": pid, "tid": tid}
         if phase in _PHASES_WITH_CAT:
             event["cat"] = _CAT
@@ -158,6 +169,10 @@ def decode(data: bytes, *, names: Dict[int, str] | None = None) -> Iterator[dict
             event["args"] = {"value": int(value) if value.is_integer() else value}
         elif phase in ("b", "e"):
             event["id"] = arg
+            if phase == "b":
+                task = pending_tasks.pop((tid, arg), None)
+                if task is not None:
+                    event["args"] = {"task": task}
         elif phase == "M":
             value = names.get(arg)
             if value is None:

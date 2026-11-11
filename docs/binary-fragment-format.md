@@ -45,6 +45,13 @@ records (repeated until 0x00 tag or EOF):
 | `b`   | async begin        | async id                           | `cat`, `ts`, `id`              |
 | `e`   | async end          | async id                           | `cat`, `ts`, `id`              |
 | `M`   | metadata           | name_id of the value string        | `args.name` (no `cat`/`ts`)    |
+| `T`   | task name (2.1)    | async id of the `b` that follows   | not emitted; adds `args.task` to that `b` |
+
+A `T` record's `name_id` is the Swift task name. The writer emits it
+immediately before the `b` record with the same thread and async id (both in
+one batch), and decoders attach it to that `b` as `args.task`. Decoders older
+than 2.1 pass it through as an event with phase `T`; use a 2.1 decoder for
+traces that contain named tasks.
 
 Counter values are decoded as an integer when integral (e.g. `60`), else a
 float (e.g. `142.5`), matching the text producer.

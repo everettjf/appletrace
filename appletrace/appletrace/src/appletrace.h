@@ -11,6 +11,10 @@ FOUNDATION_EXPORT void APTInstant(const char *name);
 FOUNDATION_EXPORT void APTCounter(const char *name, double value);
 FOUNDATION_EXPORT void APTAsyncBegin(const char *name, uint64_t async_id);
 FOUNDATION_EXPORT void APTAsyncEnd(const char *name, uint64_t async_id);
+/// APTAsyncBegin that also records the name of the Swift task (or any other
+/// label) that started the span, shown as the `task` argument in Perfetto.
+/// A NULL or empty `task_name` behaves like APTAsyncBegin.
+FOUNDATION_EXPORT void APTAsyncBeginWithTask(const char *name, uint64_t async_id, const char *task_name);
 /// Returns a process-unique id for APTAsyncBegin / APTAsyncEnd pairs.
 FOUNDATION_EXPORT uint64_t APTNewAsyncID(void);
 FOUNDATION_EXPORT void APTSyncWait(void);

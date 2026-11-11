@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased (2.1)
+
+### Added
+
+- `appletrace summary`: per-span count, total, self, mean, p50, p95 and max
+  durations for one or more runs, as a table or JSON (`-o` saves a baseline).
+- `appletrace diff`: compares two traces or summaries span by span and exits
+  with status 2 when a span regressed by more than `--threshold` and
+  `--min-delta` (`--metric`, `--only`, `--fail-on-missing`, `--json`). See
+  [docs/ci-performance-gates.md](docs/ci-performance-gates.md).
+- `TraceStatistics`, `TraceStatisticsBuilder` and `TraceComparison` in
+  `AppleTraceKit`.
+- Swift async spans (`withAsyncSpan`, `@Traced` on `async` functions) record
+  the current task's name (Swift 6.2 named tasks, OS 26 and later) as their
+  `task` argument. C: `APTAsyncBeginWithTask()`.
+- Binary fragments gain a `T` record carrying that task name; `appletrace
+  merge` and `merge.py` attach it to the async begin that follows.
+
+### Verified
+
+- Swift tests (36), Python tests (27), `scripts/test_ci_gates.sh`, and the
+  Swift demo app recorded three times against three times on an iOS 27.2
+  Simulator: unchanged code passes with `--metric p50 --threshold 20%
+  --min-delta 2ms`, and runs recorded under load are flagged.
+
 ## 2.0.0 — 2026-11-09
 
 ### Breaking

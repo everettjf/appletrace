@@ -14,6 +14,11 @@ appletrace — capture AppleTrace traces and open them in Perfetto
 USAGE
   appletrace merge <trace-dir> [-o trace.json] [--raw]
   appletrace open <trace-dir | trace.json> [--raw] [--no-browser] [--port 9001]
+  appletrace summary <trace>... [--top 20] [--sort total|self|mean|p50|p95|max|count|name]
+                     [--only <prefixes>] [--json] [-o summary.json]
+  appletrace diff <baseline> <current> [--metric total|self|mean|p50|p95|max|count]
+                  [--threshold 10%] [--min-delta 1ms] [--only <prefixes>]
+                  [--fail-on-missing] [--all] [--json]
   appletrace devices
   appletrace pull  --device <udid|name> --bundle-id <id> [-o <dir>]
   appletrace record --device <udid|name> --bundle-id <id> [--duration <sec>]
@@ -28,6 +33,12 @@ COMMANDS
   open     Merge if needed, then open the trace in ui.perfetto.dev through a
            local hand-off page (the file is passed to the Perfetto tab in your
            browser, never uploaded).
+  summary  Per-span count, total, self, mean, p50, p95 and max duration. Each
+           <trace> (a fragment directory or trace JSON) is one run; several
+           runs combine. -o saves the summary as a baseline for `diff`.
+  diff     Compare two traces or summaries span by span. Exits 2 when a span
+           regressed by more than --threshold and --min-delta (or disappeared,
+           with --fail-on-missing), 1 on errors, 0 otherwise.
   devices  List iOS devices visible to devicectl.
   pull     Copy <app container>/Library/appletracedata from a development-signed
            app on a device (devicectl).
@@ -339,6 +350,19 @@ do {
         _ = try merge(Arguments(rest, valueOptions: ["-o", "--output"], flagOptions: ["--raw"]))
     case "open":
         try open(Arguments(rest, valueOptions: ["-o", "--output", "--port"], flagOptions: ["--raw", "--no-browser"]))
+    case "summary":
+        try StatisticsCommands.summary(Arguments(
+            rest,
+            valueOptions: ["--top", "--sort", "--only", "-o", "--output"],
+            flagOptions: ["--json", "--table"]
+        ))
+    case "diff":
+        let status = try StatisticsCommands.diff(Arguments(
+            rest,
+            valueOptions: ["--metric", "--threshold", "--min-delta", "--only"],
+            flagOptions: ["--fail-on-missing", "--all", "--json"]
+        ))
+        exit(status)
     case "devices":
         try devices()
     case "pull":

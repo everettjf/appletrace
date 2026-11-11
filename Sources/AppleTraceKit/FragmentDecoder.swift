@@ -105,6 +105,9 @@ public enum FragmentDecoder {
             guard offset + 4 <= size else { return }
             let pid = Int64(raw.loadUnaligned(fromByteOffset: offset, as: UInt32.self).littleEndian)
             offset += 4
+            // 'T' records name the task of the async begin that follows them
+            // on the same thread, keyed by (tid, async id).
+            var pendingTasks: [TaskKey: String] = [:]
 
             while offset < size {
                 let tag = raw[offset]
@@ -135,6 +138,10 @@ public enum FragmentDecoder {
                     throw TraceDecodingError.undefinedString(id: nameID, file: file)
                 }
                 let phase = String(UnicodeScalar(tag))
+                if phase == "T" {
+                    pendingTasks[TaskKey(tid: tid, id: arg)] = name
+                    continue
+                }
                 var event = TraceEvent(name: name, phase: phase, pid: pid, tid: tid)
                 switch phase {
                 case "B", "E":
@@ -152,6 +159,9 @@ public enum FragmentDecoder {
                     event.category = "appletrace"
                     event.timestamp = ts
                     event.id = arg
+                    if phase == "b", let task = pendingTasks.removeValue(forKey: TaskKey(tid: tid, id: arg)) {
+                        event.args = [("task", .string(task))]
+                    }
                 case "M":
                     guard arg <= UInt64(UInt32.max), let value = names[UInt32(arg)] else {
                         throw TraceDecodingError.undefinedString(id: UInt32(truncatingIfNeeded: arg), file: file)
@@ -163,6 +173,11 @@ public enum FragmentDecoder {
                 try emit(event)
             }
         }
+    }
+
+    struct TaskKey: Hashable {
+        var tid: UInt64
+        var id: UInt64
     }
 
     // MARK: Text
