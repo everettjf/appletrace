@@ -3,7 +3,7 @@
 //  TraceAllMsgDemo
 //
 //  Created by everettjf on 21/09/2017.
-//  Copyright © 2017 everettjf. All rights reserved.
+//  Copyright © 2017 AtomSprout. All rights reserved.
 //
 
 #import "AppDelegate.h"

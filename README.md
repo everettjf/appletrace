@@ -15,7 +15,7 @@ Repository: <https://github.com/everettjf/appletrace>
 
 **A lightweight, embeddable Objective-C and Swift tracer that produces shareable [Perfetto](https://ui.perfetto.dev) traces**
 
-📖 **[Read the full Tutorial &amp; Usage Guide →](https://everettjf.github.io/AppleTrace/)**
+📖 **[Read the full Tutorial &amp; Usage Guide →](https://atomsprout.com/appletrace/)**
 
 [English](README.md) | [中文](README_CN.md)
 

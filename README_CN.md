@@ -15,7 +15,7 @@
 
 **轻量、可内嵌的 Objective-C 与 Swift 追踪器，产物可直接在 [Perfetto](https://ui.perfetto.dev) 中打开和分享**
 
-📖 **[阅读完整教程与使用指南 →](https://everettjf.github.io/AppleTrace/zh.html)**
+📖 **[阅读完整教程与使用指南 →](https://atomsprout.com/appletrace/zh.html)**
 
 [English](README.md) | [中文](README_CN.md)
 
